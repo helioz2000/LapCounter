@@ -21,6 +21,13 @@
  */
 
 #include <SoftwareSerial.h>
+#include "TinyWireM.h"                  // I2C Master lib for ATTinys which use USI
+#include "LiquidCrystal_attiny.h"       // for LCD w/ GPIO MODIFIED for the ATtiny85
+
+#define LCD_I2C_ADDR     0x3F              // (PCA8574A A0-A2 @5V) typ. A0-A3 Gnd 0x20 / 0x38 for A
+const byte LCD_ROWS = 4;
+const byte LCD_COLUMNS = 20;
+
 
 // I/O Pin definitions
 #define BAT1_SEL_PIN 10   // pin 2
@@ -36,11 +43,43 @@ const byte TX = 0;    // pin 13
 
 SoftwareSerial Serial(RX, TX);  // use the software-serial library  
 
+LiquidCrystal_I2C lcd(LCD_I2C_ADDR,LCD_COLUMNS,LCD_ROWS);  // set address & 16 chars / 2 lines
+
 void setup() {
+  // For debugging
   Serial.begin(9600);
+
+  // I/O pins
+  pinMode(BAT1_SEL_PIN, OUTPUT);
+  pinMode(BAT2_SEL_PIN, OUTPUT);
+  digitalWrite(BAT1_SEL_PIN, LOW);
+  digitalWrite(BAT1_SEL_PIN, LOW);
+
+  // Analog pins
+  analogReference(DEFAULT);   // use VCC as reference
+  
+  // initialize the lcd 
+  lcd.init();                           
+  //lcd.backlight();
+  lcd.clear();
+  lcd.print("Lap Counter");  // Print a message to the LCD.
 }
 
 void loop() {
   Serial.println("lc_power is operational");
-  delay(5000);
+  delay(500);
+  lcd.setCursor(0,0);
+  lcd.print("Time: ");
+  lcd.print(millis());
+  lcd.print("ms");
+  //lcd.noBacklight();
+/*
+  lcd.clear();                          // display it
+  lcd.print("C: ");
+  lcd.print(tempC,DEC);
+  lcd.setCursor(7,0);
+  lcd.print("F: ");
+  lcd.print(tempF,DEC);
+*/
+  
 }
