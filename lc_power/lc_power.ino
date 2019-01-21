@@ -37,13 +37,22 @@ const byte LCD_COLUMNS = 20;
 #define BAT2_V_PIN A2     // pin 11
 #define BAT1_V_PIN A1     // pin 12
 
+
 // for commissioning only
 const byte RX = 8;    // pin 5
 const byte TX = 0;    // pin 13
 
 SoftwareSerial Serial(RX, TX);  // use the software-serial library  
+LiquidCrystal_I2C lcd(LCD_I2C_ADDR,LCD_COLUMNS,LCD_ROWS);  // set address & LCD size
 
-LiquidCrystal_I2C lcd(LCD_I2C_ADDR,LCD_COLUMNS,LCD_ROWS);  // set address & 16 chars / 2 lines
+// Analog conversion constant
+const int vcc_mV = 5000;              // VCC
+const int adc_resolution = 1024;      // bits ADC
+const float mV_per_bit = (float)vcc_mV / (float)adc_resolution;       // for analog conversion
+const int mA_per_mV = 2;                    // ACS712 5A = 2.5V, 2mA per mV
+
+// Analog readings
+int bat1_I_mA, bat2_I_mA, bat1_V_mV, bat2_V_mV;
 
 void setup() {
   // For debugging
@@ -56,30 +65,58 @@ void setup() {
   digitalWrite(BAT1_SEL_PIN, LOW);
 
   // Analog pins
-  analogReference(DEFAULT);   // use VCC as reference
+  analogReference(DEFAULT);   // use VCC as reference [INTERNAL = 1.1V, EXTERNAL]
   
   // initialize the lcd 
   lcd.init();                           
-  //lcd.backlight();
+  lcd.backlight();
   lcd.clear();
   lcd.print("Lap Counter");  // Print a message to the LCD.
+  lcd.setCursor(0,2);
+  lcd.print("Control Technologies");
+  delay(2000);
+  lcd.clear();
+}
+
+// returns mV reading for Analog Input
+float readAnalogVoltage(byte analogPin) {
+  return float(analogRead(analogPin)) * mV_per_bit;
+}
+
+// read all analogs
+void readAnalogs(void) {
+  int analogIn_mV = (int)readAnalogVoltage(BAT1_I_PIN);
+  bat1_I_mA = (analogIn_mV - (vcc_mV / 2)) * mA_per_mV; 
+  analogIn_mV = (int)readAnalogVoltage(BAT2_I_PIN);
+  bat2_I_mA = (analogIn_mV - (vcc_mV / 2)) * mA_per_mV;
+  analogIn_mV = (int)readAnalogVoltage(BAT1_V_PIN);
+  bat1_V_mV = analogIn_mV;
+  analogIn_mV = (int)readAnalogVoltage(BAT2_V_PIN);
+  bat2_V_mV = analogIn_mV;
 }
 
 void loop() {
   Serial.println("lc_power is operational");
-  delay(500);
+  delay(250);
+  readAnalogs();
   lcd.setCursor(0,0);
-  lcd.print("Time: ");
-  lcd.print(millis());
-  lcd.print("ms");
-  //lcd.noBacklight();
-/*
-  lcd.clear();                          // display it
-  lcd.print("C: ");
-  lcd.print(tempC,DEC);
-  lcd.setCursor(7,0);
-  lcd.print("F: ");
-  lcd.print(tempF,DEC);
-*/
+  lcd.print("B1I=");
+  lcd.print(bat1_I_mA);
+  lcd.print("  ");
+
+  lcd.setCursor(10,0);
+  lcd.print("B1V=");
+  lcd.print(bat1_V_mV);
+  lcd.print("  ");
+  
+  lcd.setCursor(0,1);
+  lcd.print("B2I=");
+  lcd.print(bat2_I_mA);
+  lcd.print("  ");
+
+  lcd.setCursor(10,1);
+  lcd.print("B2V=");
+  lcd.print(bat2_V_mV);
+  lcd.print("  ");
   
 }
