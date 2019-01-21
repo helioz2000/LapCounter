@@ -90,9 +90,9 @@ void readAnalogs(void) {
   analogIn_mV = (int)readAnalogVoltage(BAT2_I_PIN);
   bat2_I_mA = (analogIn_mV - (vcc_mV / 2)) * mA_per_mV;
   analogIn_mV = (int)readAnalogVoltage(BAT1_V_PIN);
-  bat1_V_mV = analogIn_mV;
+  bat1_V_mV = int(float(analogIn_mV - 913) / 0.1978) + 8000;
   analogIn_mV = (int)readAnalogVoltage(BAT2_V_PIN);
-  bat2_V_mV = analogIn_mV;
+  bat2_V_mV = int(float(analogIn_mV - 913) / 0.1978) + 8000;
 }
 
 void loop() {
