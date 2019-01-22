@@ -20,9 +20,18 @@
  * 14 - GND
  */
 
+// enable for serial debugging
+//#define DEBUG_SERIAL 1
+#define DEBUG_SHOW_AI_V           // show voltage at analog input
+//#define DEBUG_SHOW_AI_RAW         // overrides DEBUG_SHOW_AI_V
+
+#ifdef DEBUG_SERIAL
 #include <SoftwareSerial.h>
+#endif
+
 #include "TinyWireM.h"                  // I2C Master lib for ATTinys which use USI
 #include "LiquidCrystal_attiny.h"       // for LCD w/ GPIO MODIFIED for the ATtiny85
+#include "Smoothed.h"                   // to filter ACS712 readings
 
 #define LCD_I2C_ADDR     0x3F              // (PCA8574A A0-A2 @5V) typ. A0-A3 Gnd 0x20 / 0x38 for A
 const byte LCD_ROWS = 4;
@@ -37,26 +46,33 @@ const byte LCD_COLUMNS = 20;
 #define BAT2_V_PIN A2     // pin 11
 #define BAT1_V_PIN A1     // pin 12
 
-
+#ifdef DEBUG_SERIAL
 // for commissioning only
 const byte RX = 8;    // pin 5
 const byte TX = 0;    // pin 13
+SoftwareSerial Serial(RX, TX);  // use the software-serial library
+#endif
 
-SoftwareSerial Serial(RX, TX);  // use the software-serial library  
 LiquidCrystal_I2C lcd(LCD_I2C_ADDR,LCD_COLUMNS,LCD_ROWS);  // set address & LCD size
+Smoothed <int> bat1_I_raw;
+Smoothed <int> bat2_I_raw;
 
 // Analog conversion constant
 const int vcc_mV = 5000;              // VCC
 const int adc_resolution = 1024;      // bits ADC
 const float mV_per_bit = (float)vcc_mV / (float)adc_resolution;       // for analog conversion
 const int mA_per_mV = 2;                    // ACS712 5A = 2.5V, 2mA per mV
+const int acs712_zero_offset_i1 = -15;         // ACS712 zero point offset from VCC/2 [mV]
+const int acs712_zero_offset_i2 = -20;         // ACS712 zero point offset from VCC/2 [mV]
 
 // Analog readings
 int bat1_I_mA, bat2_I_mA, bat1_V_mV, bat2_V_mV;
 
 void setup() {
   // For debugging
+#ifdef DEBUG_SERIAL
   Serial.begin(9600);
+#endif
 
   // I/O pins
   pinMode(BAT1_SEL_PIN, OUTPUT);
@@ -66,6 +82,9 @@ void setup() {
 
   // Analog pins
   analogReference(DEFAULT);   // use VCC as reference [INTERNAL = 1.1V, EXTERNAL]
+
+  bat1_I_raw.begin(SMOOTHED_AVERAGE, 16);
+  bat2_I_raw.begin(SMOOTHED_AVERAGE, 16);
   
   // initialize the lcd 
   lcd.init();                           
@@ -74,49 +93,148 @@ void setup() {
   lcd.print("Lap Counter");  // Print a message to the LCD.
   lcd.setCursor(0,2);
   lcd.print("Control Technologies");
+  lcd.setCursor(0,3);
+#ifdef DEBUG_SHOW_AI_RAW
+  lcd.print("DEBUG_SHOW_AI_RAW");
+#else
+#ifdef DEBUG_SHOW_AI_V
+  lcd.print("DEBUG_SHOW_AI_V");
+#endif
+#endif
   delay(2000);
   lcd.clear();
 }
 
+// convert raw analog reading to mV
+float analogVoltage(int rawValue) {
+  return float(rawValue) * mV_per_bit;
+}
+
 // returns mV reading for Analog Input
 float readAnalogVoltage(byte analogPin) {
-  return float(analogRead(analogPin)) * mV_per_bit;
+  return analogVoltage(analogRead(analogPin));
 }
 
 // read all analogs
 void readAnalogs(void) {
-  int analogIn_mV = (int)readAnalogVoltage(BAT1_I_PIN);
-  bat1_I_mA = (analogIn_mV - (vcc_mV / 2)) * mA_per_mV; 
-  analogIn_mV = (int)readAnalogVoltage(BAT2_I_PIN);
-  bat2_I_mA = (analogIn_mV - (vcc_mV / 2)) * mA_per_mV;
+  // current inputs are filtered
+  bat1_I_raw.add(analogRead(BAT1_I_PIN));
+  bat2_I_raw.add(analogRead(BAT2_I_PIN));
+  
+  int analogIn_mV = (int)analogVoltage(bat1_I_raw.get()); 
+#ifdef DEBUG_SHOW_AI_V
+  bat1_I_mA = analogIn_mV;
+#else
+  bat1_I_mA = (analogIn_mV - (vcc_mV / 2) - acs712_zero_offset_i1) * mA_per_mV;
+#endif
+
+  analogIn_mV = (int)analogVoltage(bat2_I_raw.get()); 
+#ifdef DEBUG_SHOW_AI_V
+  bat2_I_mA = analogIn_mV;
+#else
+  bat2_I_mA = (analogIn_mV - (vcc_mV / 2) - acs712_zero_offset_i2) * mA_per_mV;
+#endif
+
   analogIn_mV = (int)readAnalogVoltage(BAT1_V_PIN);
+#ifdef DEBUG_SHOW_AI_V
+  bat1_V_mV = analogIn_mV;
+#else
   bat1_V_mV = int(float(analogIn_mV - 913) / 0.1978) + 8000;
+#endif
+
   analogIn_mV = (int)readAnalogVoltage(BAT2_V_PIN);
+#ifdef DEBUG_SHOW_AI_V
+  bat2_V_mV = analogIn_mV;
+#else
   bat2_V_mV = int(float(analogIn_mV - 913) / 0.1978) + 8000;
+#endif
 }
 
-void loop() {
-  Serial.println("lc_power is operational");
-  delay(250);
-  readAnalogs();
+void displayValues () {
   lcd.setCursor(0,0);
-  lcd.print("B1I=");
+  lcd.print("I1=");
   lcd.print(bat1_I_mA);
+#ifdef DEBUG_SHOW_AI_V
+  lcd.print("mV");
+#else
+  lcd.print("  ");
+#endif
+
+  lcd.setCursor(10,0);
+  lcd.print("V1=");
+  lcd.print(bat1_V_mV);
+#ifdef DEBUG_SHOW_AI_V
+  lcd.print("mV");
+#else
+  lcd.print("  ");
+#endif
+  
+  lcd.setCursor(0,1);
+  lcd.print("I2=");
+  lcd.print(bat2_I_mA);
+#ifdef DEBUG_SHOW_AI_V
+  lcd.print("mV");
+#else
+  lcd.print("  ");
+#endif
+
+  lcd.setCursor(10,1);
+  lcd.print("V2=");
+  lcd.print(bat2_V_mV);
+#ifdef DEBUG_SHOW_AI_V
+  lcd.print("mV");
+#else
+  lcd.print("  ");
+#endif
+}
+
+#ifdef DEBUG_SHOW_AI_RAW
+void displayRawValues () {
+  lcd.setCursor(0,0);
+  lcd.print("I1=");
+  lcd.print(analogRead(BAT1_I_PIN));  
   lcd.print("  ");
 
   lcd.setCursor(10,0);
-  lcd.print("B1V=");
-  lcd.print(bat1_V_mV);
+  lcd.print("V1=");
+  lcd.print(analogRead(BAT1_V_PIN));
   lcd.print("  ");
+
   
   lcd.setCursor(0,1);
-  lcd.print("B2I=");
-  lcd.print(bat2_I_mA);
+  lcd.print("I2=");
+  lcd.print(analogRead(BAT2_I_PIN));
   lcd.print("  ");
 
   lcd.setCursor(10,1);
-  lcd.print("B2V=");
-  lcd.print(bat2_V_mV);
+  lcd.print("V2=");
+  lcd.print(analogRead(BAT2_V_PIN));
   lcd.print("  ");
-  
+
+
+  bat1_I_raw.add(analogRead(BAT1_I_PIN));
+  bat2_I_raw.add(analogRead(BAT2_I_PIN));
+  lcd.setCursor(0,2);
+  lcd.print("I1 Filtered =");
+  lcd.print(bat1_I_raw.get());
+  lcd.print("  ");
+
+  lcd.setCursor(0,3);
+  lcd.print("I2 Filtered =");
+  lcd.print(bat2_I_raw.get());
+  lcd.print("  ");
+}
+#endif
+
+void loop() {
+#ifdef DEBUG_SERIAL  
+  Serial.println("lc_power is operational");
+#endif
+  delay(100);
+#ifdef DEBUG_SHOW_AI_RAW
+  displayRawValues();
+#else
+  readAnalogs();
+  displayValues();
+#endif
 }
