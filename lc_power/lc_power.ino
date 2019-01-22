@@ -22,7 +22,7 @@
 
 // enable for serial debugging
 //#define DEBUG_SERIAL 1
-#define DEBUG_SHOW_AI_V           // show voltage at analog input
+//#define DEBUG_SHOW_AI_V           // show voltage at analog input
 //#define DEBUG_SHOW_AI_RAW         // overrides DEBUG_SHOW_AI_V
 
 #ifdef DEBUG_SERIAL
@@ -139,14 +139,14 @@ void readAnalogs(void) {
 #ifdef DEBUG_SHOW_AI_V
   bat1_V_mV = analogIn_mV;
 #else
-  bat1_V_mV = int(float(analogIn_mV - 913) / 0.1978) + 8000;
+  bat1_V_mV = int(float(analogIn_mV - 913) / 0.337) + 13000;
 #endif
 
   analogIn_mV = (int)readAnalogVoltage(BAT2_V_PIN);
 #ifdef DEBUG_SHOW_AI_V
   bat2_V_mV = analogIn_mV;
 #else
-  bat2_V_mV = int(float(analogIn_mV - 913) / 0.1978) + 8000;
+  bat2_V_mV = int(float(analogIn_mV - 913) / 0.337) + 13000;
 #endif
 }
 
