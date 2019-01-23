@@ -14,8 +14,8 @@
  * 8 - not connected
  * 9 - I2C SCL
  * 10- Analog Input - Current Batt2 (ACS712 5A)
- * 11 - Analog Input - Voltage Batt2 (MCP6002 B)
- * 12 - Analog Input - Voltage Batt1 (MCP6002 A)
+ * 11 - Analog Input - Voltage Batt2 (MCP6002 B, range 10.3V-25V)
+ * 12 - Analog Input - Voltage Batt1 (MCP6002 A, range 10.3V-25V)
  * 13 - not connected (Serial TX for commissioning)
  * 14 - GND
  * 
@@ -71,16 +71,16 @@ SoftwareSerial Serial(RX, TX);  // use the software-serial library
 #endif
 
 LiquidCrystal_I2C lcd(LCD_I2C_ADDR,LCD_COLUMNS,LCD_ROWS);  // set address & LCD size
-Smoothed <int> bat1_I_raw;
-Smoothed <int> bat2_I_raw;
+Smoothed <int> bat_I_filter[2];     // filter raw analog values
+//Smoothed <int> bat2_I_filter;     // filter raw analog values
 
 // Analog conversion constant
 const int vcc_mV = 5000;              // VCC
 const int adc_resolution = 1024;      // bits ADC
 const float mV_per_bit = (float)vcc_mV / (float)adc_resolution;       // for analog conversion
 const int mA_per_mV = 2;                    // ACS712 5A = 2.5V, 2mA per mV
-const int acs712_zero_offset_i1 = -15;         // ACS712 zero point offset from VCC/2 [mV]
-const int acs712_zero_offset_i2 = -20;         // ACS712 zero point offset from VCC/2 [mV]
+const int acs712_zero_offset[] = { -15, -20 };         // ACS712 zero point offset from VCC/2 [mV]
+//const int acs712_zero_offset_i2 = -20;         // ACS712 zero point offset from VCC/2 [mV]
 
 // Analog readings
 int bat_I_mA[2], bat_V_mV[2];
@@ -96,6 +96,7 @@ const int PROCESS_INTERVAL = 500;           // ms between logic processing
 BatteryType bat_type[] = { NONE, NONE };
 bool bat_low[] = { false, false };
 unsigned long bat_low_time[] = { 0, 0 };
+const int BAT_LOW_TIME = 5000;            // ms voltage below min before bat_Low is set
 
 unsigned long nextAnalogRead, nextDisplayUpdate, nextProcess;
 
@@ -114,8 +115,8 @@ void setup() {
   // Analog pins
   analogReference(DEFAULT);   // use VCC as reference [INTERNAL = 1.1V, EXTERNAL]
 
-  bat1_I_raw.begin(SMOOTHED_AVERAGE, 16);
-  bat2_I_raw.begin(SMOOTHED_AVERAGE, 16);
+  bat_I_filter[B1].begin(SMOOTHED_AVERAGE, 16);
+  bat_I_filter[B2].begin(SMOOTHED_AVERAGE, 16);
   
   // initialize the lcd 
   lcd.init();                           
@@ -141,15 +142,15 @@ void setup() {
   nextProcess = millis()+PROCESS_INTERVAL;
 }
 
-BatteryType getBatteryType(int voltage) {
-  if (voltage < 10500) return NONE;
-  if (voltage > 14900) return LI_ION;
+BatteryType getBatteryType(int batIndex) {
+  if (bat_V_mV[batIndex] < 10500) return NONE;
+  if (bat_V_mV[batIndex] > 14900) return LI_ION;
   return LEAD_ACID;
 }
 
-bool checkBatteryLow(int bat_index) {
+bool checkBatteryLow(int batIndex) {
   int lowVoltage;
-  switch (bat_type[bat_index])  {
+  switch (bat_type[batIndex])  {
   case NONE:
     return false;
   case LI_ION:
@@ -159,13 +160,25 @@ bool checkBatteryLow(int bat_index) {
     lowVoltage = 11500;
     break;
   }
+  if (bat_V_mV[batIndex] <= lowVoltage) {
+    if (bat_low_time[batIndex] == 0) {
+      bat_low_time[batIndex] = millis() + BAT_LOW_TIME;
+    } else {
+      if (millis() > bat_low_time[batIndex] ) return true;
+    }
+    
+  } else {
+    bat_low_time[batIndex] = 0;     // reset timeout
+  }
   return false;
 }
 
 // process logic
 void process() {
-  bat_type[B1] = getBatteryType(bat_V_mV[B1]);
-  bat_type[B2] = getBatteryType(bat_V_mV[B2]);
+  bat_type[B1] = getBatteryType(B1);
+  bat_type[B2] = getBatteryType(B2);
+  bat_low[B1] = checkBatteryLow(B1);
+  bat_low[B2] = checkBatteryLow(B2);
 }
 
 // convert raw analog reading to mV
@@ -173,44 +186,53 @@ float analogVoltage(int rawValue) {
   return float(rawValue) * mV_per_bit;
 }
 
-// returns mV reading for Analog Input
+/*  read analog input voltage
+ *  returns reading in mV
+ */
 float readAnalogVoltage(byte analogPin) {
   return analogVoltage(analogRead(analogPin));
 }
 
+/*
+ * Convert analog input voltage to battery voltage
+ * inputVoltage in mV
+ */
+int getBatteryVoltage(int inputVoltage) {
+#ifdef DEBUG_SHOW_AI_V
+  return inputVoltage;
+#else
+  int batV = int(float(inputVoltage - 239) / 0.337) + 11000;
+  if (batV < 10500) batV = 0;
+  return batV;
+#endif
+}
+
+/*
+ * Convert analog input voltage to current reading 
+ * ACS712 output is VCC/2 at zero
+ * inputVoltage in mV
+ */
+int getBatteryCurrent(byte batIndex) {
+  int inputVoltage = (int)analogVoltage(bat_I_filter[batIndex].get());
+#ifdef DEBUG_SHOW_AI_V
+  return inputVoltage;
+#else
+  return (inputVoltage - (vcc_mV / 2) - acs712_zero_offset[batIndex]) * mA_per_mV;
+#endif
+}
+
 // read all analogs
 void readAnalogs(void) {
-  // current inputs are filtered
-  bat1_I_raw.add(analogRead(BAT1_I_PIN));
-  bat2_I_raw.add(analogRead(BAT2_I_PIN));
-  
-  int analogIn_mV = (int)analogVoltage(bat1_I_raw.get()); 
-#ifdef DEBUG_SHOW_AI_V
-  bat_I_mA[B1] = analogIn_mV;
-#else
-  bat_I_mA[B1] = (analogIn_mV - (vcc_mV / 2) - acs712_zero_offset_i1) * mA_per_mV;
-#endif
+  // run current inputs through filter
+  bat_I_filter[B1].add(analogRead(BAT1_I_PIN));
+  bat_I_filter[B2].add(analogRead(BAT2_I_PIN));
 
-  analogIn_mV = (int)analogVoltage(bat2_I_raw.get()); 
-#ifdef DEBUG_SHOW_AI_V
-  bat_I_mA[B2] = analogIn_mV;
-#else
-  bat_I_mA[B2] = (analogIn_mV - (vcc_mV / 2) - acs712_zero_offset_i2) * mA_per_mV;
-#endif
+  bat_I_mA[B1] = getBatteryCurrent( B1 );
+  bat_I_mA[B2] = getBatteryCurrent( B2 );
 
-  analogIn_mV = (int)readAnalogVoltage(BAT1_V_PIN);
-#ifdef DEBUG_SHOW_AI_V
-  bat_V_mV[B1] = analogIn_mV;
-#else
-  bat_V_mV[B1] = int(float(analogIn_mV - 913) / 0.337) + 13000;
-#endif
+  bat_V_mV[B1] = getBatteryVoltage((int)readAnalogVoltage(BAT1_V_PIN));
+  bat_V_mV[B2] = getBatteryVoltage((int)readAnalogVoltage(BAT2_V_PIN));
 
-  analogIn_mV = (int)readAnalogVoltage(BAT2_V_PIN);
-#ifdef DEBUG_SHOW_AI_V
-  bat_V_mV[B2] = analogIn_mV;
-#else
-  bat_V_mV[B2] = int(float(analogIn_mV - 913) / 0.337) + 13000;
-#endif
 }
 
 void displayValues () {
@@ -252,7 +274,29 @@ void displayValues () {
 #else
   lcd.print("  ");
 #endif
+
+  lcd.setCursor(0,2);
+  lcd.print("B1=");
+  displayBatteryType(B1);
+  lcd.setCursor(10,2);
+  lcd.print("B2=");
+  displayBatteryType(B2);
+
+  displayAlarm();
 #endif
+}
+
+void displayBatteryType(byte batIndex) {
+  switch(bat_type[batIndex]) {
+    case LEAD_ACID:
+      lcd.print("Lead");
+      break;
+    case LI_ION:
+      lcd.print("LiIon");
+      break;
+    default:
+      lcd.print("-");
+  }
 }
 
 #ifdef DEBUG_SHOW_AI_RAW
@@ -291,6 +335,21 @@ void displayRawValues () {
 #endif
 
 
+void displayAlarm() {
+  lcd.setCursor(0,3);
+  clearLine();
+  lcd.setCursor(0,3);
+  if(bat_low[B1]) { lcd.print("B1 low V"); return; }
+  if(bat_low[B2]) { lcd.print("B2 low V"); return; }
+  
+}
+
+void clearLine() {
+  int i;
+  for (i=0; i< LCD_COLUMNS; i++) {
+    lcd.print(" ");
+  }
+}
 
 void loop() {
 #ifdef DEBUG_SERIAL  
