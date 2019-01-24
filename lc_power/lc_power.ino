@@ -86,11 +86,11 @@ int bat_I_mA[2], bat_V_mV[2];
 // Processing time slots
 const int ANALOG_READ_INTERVAL = 100;       // ms between analog update
 const int DISPLAY_UPDATE_INTERVAL = 250;    // ms between display update
-const int PROCESS_INTERVAL = 50;           // ms between logic processing
+const int PROCESS_INTERVAL = 10;            // ms between logic processing
 unsigned long nextAnalogRead, nextDisplayUpdate, nextProcess;
 
 // Battery variables
-#define B1 0    // index for arrays
+#define B1 0    // index for Battery arrays
 #define B2 1
 
 // Battery variables
@@ -101,6 +101,10 @@ unsigned long bat_off_delay[] = { 0, 0 }; // off delay to create overlap on batt
 unsigned long bat_low_time[] = { 0, 0 };  // timer for battery low detection 
 const int BAT_LOW_TIME = 5000;            // ms voltage below min before bat_Low is set
 const int BAT_OFF_DELAY = 200;            // ms overlay for battery changeover
+unsigned long NO_BATTERY_VOLTAGE = 10500; // mV measued when bettery is disconnected.
+unsigned long LI_ION_DETECT_VOLTAGE = 14900;  // mV above which we have a Li-Ion battery
+unsigned long LEAD_ACID_LOW_VOLTAGE = 11500;  // mV for low voltage detection
+unsigned long LI_ION_LOW_VOLTAGE = 15000;     // mV for low voltage detection
 
 void setup() {
   // For debugging
@@ -146,8 +150,8 @@ void setup() {
 }
 
 BatteryType getBatteryType(int batIndex) {
-  if (bat_V_mV[batIndex] < 10500) return NONE;
-  if (bat_V_mV[batIndex] > 14900) return LI_ION;
+  if (bat_V_mV[batIndex] < NO_BATTERY_VOLTAGE) return NONE;
+  if (bat_V_mV[batIndex] > LI_ION_DETECT_VOLTAGE) return LI_ION;
   return LEAD_ACID;
 }
 
@@ -157,10 +161,10 @@ bool checkBatteryLow(int batIndex) {
   case NONE:
     return false;
   case LI_ION:
-    lowVoltage = 15000;
+    lowVoltage = LI_ION_LOW_VOLTAGE;
     break;
   case LEAD_ACID:
-    lowVoltage = 11500;
+    lowVoltage = LEAD_ACID_LOW_VOLTAGE;
     break;
   }
   if (bat_V_mV[batIndex] <= lowVoltage) {
@@ -197,7 +201,7 @@ void enableSelectedBattery() {
   // if #1 is de-selected but is still enabled
   if (!bat_selected[B1] && digitalRead(BAT_SEL_PIN[B1])) {
     // switch #2 on
-    bat_enable[B2] = bat_selected[B2];
+    bat_enabled[B2] = bat_selected[B2];
     // keep #1 on for overlap
     bat_enabled[B1] = true;
     // start off delay timer if required
@@ -218,7 +222,7 @@ void enableSelectedBattery() {
   // overlap [off] delay for battery 2
   if (!bat_selected[B2] && digitalRead(BAT_SEL_PIN[B2])) {
     // switch #1 on
-    bat_enable[B1] = bat_selected[B1];
+    bat_enabled[B1] = bat_selected[B1];
     // keep #2 on for overlap
     bat_enabled[B2] = true;
     // start off delay timer if required
@@ -248,6 +252,7 @@ void process() {
   bat_low[B1] = checkBatteryLow(B1);
   bat_low[B2] = checkBatteryLow(B2);
   selectActiveBattery();
+  enableSelectedBattery();
 }
 
 // convert raw analog reading to mV
