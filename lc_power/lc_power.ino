@@ -56,49 +56,51 @@ const byte LCD_ROWS = 4;
 const byte LCD_COLUMNS = 20;
 
 // I/O Pin definitions
-#define BAT1_SEL_PIN 10   // pin 2
-#define BAT2_SEL_PIN 9    // pin 3
+const byte BAT_SEL_PIN[] = {10, 9 };   // pin 2 and 3
 #define BAT1_I_PIN A7     // pin 6
 #define BAT2_I_PIN A3     // pin 10
 #define BAT2_V_PIN A2     // pin 11
 #define BAT1_V_PIN A1     // pin 12
 
+// for commissioning in case LCD is not working/present
 #ifdef DEBUG_SERIAL
-// for commissioning only
 const byte RX = 8;    // pin 5
 const byte TX = 0;    // pin 13
 SoftwareSerial Serial(RX, TX);  // use the software-serial library
 #endif
 
 LiquidCrystal_I2C lcd(LCD_I2C_ADDR,LCD_COLUMNS,LCD_ROWS);  // set address & LCD size
-Smoothed <int> bat_I_filter[2];     // filter raw analog values
-//Smoothed <int> bat2_I_filter;     // filter raw analog values
 
-// Analog conversion constant
-const int vcc_mV = 5000;              // VCC
-const int adc_resolution = 1024;      // bits ADC
-const float mV_per_bit = (float)vcc_mV / (float)adc_resolution;       // for analog conversion
-const int mA_per_mV = 2;                    // ACS712 5A = 2.5V, 2mA per mV
-const int acs712_zero_offset[] = { -15, -20 };         // ACS712 zero point offset from VCC/2 [mV]
-//const int acs712_zero_offset_i2 = -20;         // ACS712 zero point offset from VCC/2 [mV]
+Smoothed <int> bat_I_filter[2];     // filter raw analog values
+
+// Analog conversion constants
+const int VCC_MV = 5000;              // VCC
+const int ADC_RESOLUTION = 1024;      // resolution of inbuilt ADC
+const float MV_PER_BIT = (float)VCC_MV / (float)ADC_RESOLUTION;       // for analog conversion
+const int MA_PER_MV = 2;                    // ACS712 5A = 2.5V, 2mA per mV
+const int ACS712_ZERO_OFFSET[] = { -15, -20 };         // ACS712 zero point offset from VCC/2 [mV]
 
 // Analog readings
 int bat_I_mA[2], bat_V_mV[2];
 
+// Processing time slots
 const int ANALOG_READ_INTERVAL = 100;       // ms between analog update
 const int DISPLAY_UPDATE_INTERVAL = 250;    // ms between display update
-const int PROCESS_INTERVAL = 500;           // ms between logic processing
+const int PROCESS_INTERVAL = 50;           // ms between logic processing
+unsigned long nextAnalogRead, nextDisplayUpdate, nextProcess;
 
 // Battery variables
 #define B1 0    // index for arrays
 #define B2 1
 
+// Battery variables
 BatteryType bat_type[] = { NONE, NONE };
-bool bat_low[] = { false, false };
-unsigned long bat_low_time[] = { 0, 0 };
+bool bat_low[] = { false, false };        // true when battery is below low level
+bool bat_selected[] = {false, false };    // true when battery is selected to drive load
+unsigned long bat_off_delay[] = { 0, 0 }; // off delay to create overlap on battery changeover
+unsigned long bat_low_time[] = { 0, 0 };  // timer for battery low detection 
 const int BAT_LOW_TIME = 5000;            // ms voltage below min before bat_Low is set
-
-unsigned long nextAnalogRead, nextDisplayUpdate, nextProcess;
+const int BAT_OFF_DELAY = 200;            // ms overlay for battery changeover
 
 void setup() {
   // For debugging
@@ -106,15 +108,16 @@ void setup() {
   Serial.begin(9600);
 #endif
 
-  // I/O pins
-  pinMode(BAT1_SEL_PIN, OUTPUT);
-  pinMode(BAT2_SEL_PIN, OUTPUT);
-  digitalWrite(BAT1_SEL_PIN, LOW);
-  digitalWrite(BAT1_SEL_PIN, LOW);
+  // configure I/O pins
+  pinMode(BAT_SEL_PIN[B1], OUTPUT);
+  pinMode(BAT_SEL_PIN[B2], OUTPUT);
+  digitalWrite(BAT_SEL_PIN[B1], LOW);
+  digitalWrite(BAT_SEL_PIN[B2], LOW);
 
-  // Analog pins
+  // Select reference for analog inputs
   analogReference(DEFAULT);   // use VCC as reference [INTERNAL = 1.1V, EXTERNAL]
 
+  // Create filters for current signal
   bat_I_filter[B1].begin(SMOOTHED_AVERAGE, 16);
   bat_I_filter[B2].begin(SMOOTHED_AVERAGE, 16);
   
@@ -173,17 +176,83 @@ bool checkBatteryLow(int batIndex) {
   return false;
 }
 
+/*
+ * Choose which battery to use
+ * first to discharge is #1
+ */
+void selectActiveBattery() {
+  bat_selected[B1] = ( (bat_type[B1] != NONE) && (!bat_low[B1]) ) ? true : false;
+  bat_selected[B1] = ( (bat_type[B2] != NONE) && (!bat_low[B2]) && (!bat_selected[B1]) ) ? true : false;
+}
+
+/*
+ * Drive the relevant output to enable the selected battery
+ * introduces overlaps and delays
+ */
+void enableSelectedBattery() {
+  bool bat_enabled[] = { false, false };
+  // if both batteries are de-selected respond immediately
+  if (!bat_selected[B1] && !bat_selected[B2] ) goto writeOut;
+  
+  // if #1 is de-selected but is still enabled
+  if (!bat_selected[B1] && digitalRead(BAT_SEL_PIN[B1])) {
+    // switch #2 on
+    bat_enable[B2] = bat_selected[B2];
+    // keep #1 on for overlap
+    bat_enabled[B1] = true;
+    // start off delay timer if required
+    if (bat_off_delay[B1] == 0) 
+      bat_off_delay[B1] = millis() + BAT_OFF_DELAY;
+    // timer is already running
+    else {
+      // has the timer expired?
+      if (millis() >= bat_off_delay[B1]) {
+        bat_enabled[B1] = false;          // disable B1
+        bat_off_delay[B1] = 0;            // reset timer
+      } 
+    }
+  } else {
+    bat_enabled[B1] = bat_selected[B1];
+  }
+
+  // overlap [off] delay for battery 2
+  if (!bat_selected[B2] && digitalRead(BAT_SEL_PIN[B2])) {
+    // switch #1 on
+    bat_enable[B1] = bat_selected[B1];
+    // keep #2 on for overlap
+    bat_enabled[B2] = true;
+    // start off delay timer if required
+    if (bat_off_delay[B2] == 0) 
+      bat_off_delay[B2] = millis() + BAT_OFF_DELAY;
+    // timer is already running
+    else {
+      // has the timer expired?
+      if (millis() >= bat_off_delay[B2]) {
+        bat_enabled[B2] = false;          // disable battery
+        bat_off_delay[B2] = 0;            // reset timer
+      } 
+    }
+  } else {
+    bat_enabled[B2] = bat_selected[B2];
+  }
+ 
+writeOut:
+  digitalWrite(BAT_SEL_PIN[B1], bat_enabled[B1] ? HIGH : LOW);
+  digitalWrite(BAT_SEL_PIN[B2], bat_enabled[B2] ? HIGH : LOW);
+}
+
 // process logic
 void process() {
   bat_type[B1] = getBatteryType(B1);
   bat_type[B2] = getBatteryType(B2);
   bat_low[B1] = checkBatteryLow(B1);
   bat_low[B2] = checkBatteryLow(B2);
+  selectActiveBattery();
 }
 
 // convert raw analog reading to mV
 float analogVoltage(int rawValue) {
-  return float(rawValue) * mV_per_bit;
+  return float(rawValue) * MV_PER_BIT;
 }
 
 /*  read analog input voltage
@@ -217,7 +286,7 @@ int getBatteryCurrent(byte batIndex) {
 #ifdef DEBUG_SHOW_AI_V
   return inputVoltage;
 #else
-  return (inputVoltage - (vcc_mV / 2) - acs712_zero_offset[batIndex]) * mA_per_mV;
+  return (inputVoltage - (VCC_MV / 2) - ACS712_ZERO_OFFSET[batIndex]) * MA_PER_MV;
 #endif
 }
 
