@@ -51,9 +51,9 @@
 #include "LiquidCrystal_attiny.h"       // for LCD w/ GPIO MODIFIED for the ATtiny85
 #include "Smoothed.h"                   // to filter ACS712 readings
 
-#define LCD_I2C_ADDR     0x3F              // (PCA8574A A0-A2 @5V) typ. A0-A3 Gnd 0x20 / 0x38 for A
-const byte LCD_ROWS = 4;
-const byte LCD_COLUMNS = 20;
+#define LCD_I2C_ADDR     0x27              // (PCA8574A A0-A2 @5V) typ. A0-A3 Gnd 0x20 / 0x38 for A
+const byte LCD_ROWS = 2;
+const byte LCD_COLUMNS = 16;
 
 // I/O Pin definitions
 const byte BAT_SEL_PIN[] = {10, 9 };   // pin 2 and 3
@@ -129,15 +129,15 @@ void setup() {
   lcd.init();                           
   lcd.backlight();
   lcd.clear();
-  lcd.print("Lap Counter");  // Print a message to the LCD.
-  lcd.setCursor(0,2);
-  lcd.print("Control Technologies");
-  lcd.setCursor(0,3);
+  lcd.print("  Lap Counter   ");  // Print a message to the LCD.
+  lcd.setCursor(0,1);
+  lcd.print("  Control Tech  ");
+  //lcd.setCursor(0,3);
 #ifdef DEBUG_SHOW_AI_RAW
-  lcd.print("DEBUG_SHOW_AI_RAW");
+  //lcd.print("DEBUG_SHOW_AI_RAW");
 #else
 #ifdef DEBUG_SHOW_AI_V
-  lcd.print("DEBUG_SHOW_AI_V");
+  //lcd.print("DEBUG_SHOW_AI_V");
 #endif
 #endif
   delay(2000);
@@ -309,55 +309,30 @@ void readAnalogs(void) {
 
 }
 
-void displayValues () {
-#ifdef DEBUG_SHOW_AI_RAW
-  displayRawValues();
-#else  
-  lcd.setCursor(0,0);
-  lcd.print("I1=");
-  lcd.print(bat_I_mA[B1]);
-#ifdef DEBUG_SHOW_AI_V
-  lcd.print("mV");
-#else
-  lcd.print("  ");
-#endif
+void displayVoltage (int millivolts) {
+  int units = millivolts/1000;
+  int fraction = millivolts - (units*1000);
+  lcd.print(units);
+  lcd.print(".");
+  lcd.print(fraction / 10);
+}
 
-  lcd.setCursor(10,0);
-  lcd.print("V1=");
-  lcd.print(bat_V_mV[B1]);
-#ifdef DEBUG_SHOW_AI_V
-  lcd.print("mV");
-#else
-  lcd.print("  ");
-#endif
-  
+void displayBatInfo (byte batIndex) {
+  if (bat_type[batIndex] != NONE) {    
+    displayVoltage(bat_V_mV[batIndex]);
+    lcd.print("V ");
+    lcd.print(bat_I_mA[batIndex]);
+    lcd.print("mA");
+  } else {
+    lcd.print("disconnected");
+  }
+
   lcd.setCursor(0,1);
-  lcd.print("I2=");
-  lcd.print(bat_I_mA[B2]);
-#ifdef DEBUG_SHOW_AI_V
-  lcd.print("mV");
-#else
-  lcd.print("  ");
-#endif
-
-  lcd.setCursor(10,1);
-  lcd.print("V2=");
-  lcd.print(bat_V_mV[B2]);
-#ifdef DEBUG_SHOW_AI_V
-  lcd.print("mV");
-#else
-  lcd.print("  ");
-#endif
-
-  lcd.setCursor(0,2);
-  lcd.print("B1=");
-  displayBatteryType(B1);
-  lcd.setCursor(10,2);
-  lcd.print("B2=");
-  displayBatteryType(B2);
-
-  displayAlarm();
-#endif
+  if(bat_low[batIndex]) { lcd.print("Low Voltage"); }
+  else {
+    displayBatteryType(batIndex);
+  }
+  
 }
 
 void displayBatteryType(byte batIndex) {
@@ -409,13 +384,22 @@ void displayRawValues () {
 #endif
 
 
-void displayAlarm() {
-  lcd.setCursor(0,3);
-  clearLine();
-  lcd.setCursor(0,3);
-  if(bat_low[B1]) { lcd.print("B1 low V"); return; }
-  if(bat_low[B2]) { lcd.print("B2 low V"); return; }
-  
+void display_pg1() {
+  lcd.setCursor(0,0);
+  lcd.print("B1:");
+  displayBatInfo(B1);
+}
+
+void display_pg2() {
+  lcd.setCursor(0,0);
+  lcd.print("B2:");
+  displayBatInfo(B2); 
+}
+
+// handle all display tasks
+void display() {
+  lcd.clear();
+  display_pg1();
 }
 
 void clearLine() {
@@ -439,7 +423,7 @@ void loop() {
   // Update display
   if (millis() >= nextDisplayUpdate) {
     nextDisplayUpdate = millis() + DISPLAY_UPDATE_INTERVAL;
-    displayValues();
+    display();
   }
 
   if (millis() >= nextProcess) {
