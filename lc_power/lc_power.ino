@@ -51,6 +51,7 @@
 #include "LiquidCrystal_attiny.h"       // for LCD w/ GPIO MODIFIED for the ATtiny85
 #include "Smoothed.h"                   // to filter ACS712 readings
 
+// LCD Display
 #define LCD_I2C_ADDR     0x27              // (PCA8574A A0-A2 @5V) typ. A0-A3 Gnd 0x20 / 0x38 for A
 const byte LCD_ROWS = 2;
 const byte LCD_COLUMNS = 16;
@@ -88,6 +89,11 @@ const int ANALOG_READ_INTERVAL = 100;       // ms between analog update
 const int DISPLAY_UPDATE_INTERVAL = 250;    // ms between display update
 const int PROCESS_INTERVAL = 10;            // ms between logic processing
 unsigned long nextAnalogRead, nextDisplayUpdate, nextProcess;
+
+// Display valiables
+unsigned long nextDisplayPageChange;
+byte displayPageNumber;
+const int DISPLAY_PAGE_CHANGE_TIME = 1000;  // ms between page changes
 
 // Battery variables
 #define B1 0    // index for Battery arrays
@@ -147,6 +153,8 @@ void setup() {
   nextAnalogRead = millis()+ANALOG_READ_INTERVAL;
   nextDisplayUpdate = millis()+DISPLAY_UPDATE_INTERVAL;
   nextProcess = millis()+PROCESS_INTERVAL;
+  nextDisplayPageChange = millis()+DISPLAY_PAGE_CHANGE_TIME;
+  displayPageNumber = 1;
 }
 
 BatteryType getBatteryType(int batIndex) {
@@ -385,21 +393,39 @@ void displayRawValues () {
 
 
 void display_pg1() {
-  lcd.setCursor(0,0);
   lcd.print("B1:");
   displayBatInfo(B1);
 }
 
-void display_pg2() {
-  lcd.setCursor(0,0);
+void display_pg2() { 
   lcd.print("B2:");
   displayBatInfo(B2); 
 }
 
-// handle all display tasks
+void display_pg3() {
+  lcd.print("Page 3");
+}
+
+// display tasks
 void display() {
   lcd.clear();
-  display_pg1();
+  lcd.setCursor(0,0);
+  if (millis() >= nextDisplayPageChange) {
+    nextDisplayPageChange = millis()+DISPLAY_PAGE_CHANGE_TIME;
+    displayPageNumber++;
+  }
+  switch(displayPageNumber) {
+    case 2:
+      display_pg2();
+      break;
+    case 3:
+      display_pg3();
+      break;     
+    default:        // default applies to "case 1:" and will reset displayPageNumber when > 3 
+      displayPageNumber=1;
+      display_pg1();
+      break; 
+  } 
 }
 
 void clearLine() {
