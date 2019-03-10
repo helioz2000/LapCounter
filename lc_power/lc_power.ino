@@ -2,6 +2,13 @@
  * lc_power.ino
  * Lap Counter base - mobile power management
  * 
+ * Compile settings:
+ * Board: ATtiny 24/44/84
+ * Processor: ATtiny84
+ * Clock: External 8MHz
+ * Programmer: USBtinyISP
+ * Port: leave clear
+ * 
  * Hardware: Atmel ATTiny84
  * Connections:
  * 1 - VCC
@@ -93,7 +100,7 @@ unsigned long nextAnalogRead, nextDisplayUpdate, nextProcess;
 // Display valiables
 unsigned long nextDisplayPageChange;
 byte displayPageNumber;
-const int DISPLAY_PAGE_CHANGE_TIME = 1000;  // ms between page changes
+const int DISPLAY_PAGE_CHANGE_TIME = 2000;  // ms between page changes
 
 // Battery variables
 #define B1 0    // index for Battery arrays
@@ -103,6 +110,7 @@ const int DISPLAY_PAGE_CHANGE_TIME = 1000;  // ms between page changes
 BatteryType bat_type[] = { NONE, NONE };
 bool bat_low[] = { false, false };        // true when battery is below low level
 bool bat_selected[] = {false, false };    // true when battery is selected to drive load
+bool bat_alarm = false;                   // will be high both batteries are too low and there is no power output
 unsigned long bat_off_delay[] = { 0, 0 }; // off delay to create overlap on battery changeover
 unsigned long bat_low_time[] = { 0, 0 };  // timer for battery low detection 
 const int BAT_LOW_TIME = 5000;            // ms voltage below min before bat_Low is set
@@ -194,7 +202,13 @@ bool checkBatteryLow(int batIndex) {
  */
 void selectActiveBattery() {
   bat_selected[B1] = ( (bat_type[B1] != NONE) && (!bat_low[B1]) ) ? true : false;
-  bat_selected[B1] = ( (bat_type[B2] != NONE) && (!bat_low[B2]) && (!bat_selected[B1]) ) ? true : false;
+  bat_selected[B2] = ( (bat_type[B2] != NONE) && (!bat_low[B2]) && (!bat_selected[B1]) ) ? true : false;
+  // No battery selected
+  if (!bat_selected[B1] && !bat_selected[B2]) { //
+    bat_alarm = true;
+  } else {
+    bat_alarm = false;
+  }
 }
 
 /*
@@ -333,26 +347,33 @@ void displayBatInfo (byte batIndex) {
     lcd.print("mA");
   } else {
     lcd.print("disconnected");
+    return;
   }
 
   lcd.setCursor(0,1);
-  if(bat_low[batIndex]) { lcd.print("Low Voltage"); }
+  if (bat_selected[batIndex]) {
+    lcd.print(  "IN USE    ");
+    }
   else {
-    displayBatteryType(batIndex);
+    if(bat_low[batIndex]) {
+      lcd.print("Low       ");
+    } else {
+      lcd.print("Standby   ");
+    }
   }
-  
+  displayBatteryType(batIndex);
 }
 
 void displayBatteryType(byte batIndex) {
   switch(bat_type[batIndex]) {
     case LEAD_ACID:
-      lcd.print("Lead");
+      lcd.print("Lead ");
       break;
     case LI_ION:
       lcd.print("LiIon");
       break;
     default:
-      lcd.print("-");
+      lcd.print("-    ");
   }
 }
 
@@ -367,7 +388,6 @@ void displayRawValues () {
   lcd.print("V1=");
   lcd.print(analogRead(BAT1_V_PIN));
   lcd.print("  ");
-
   
   lcd.setCursor(0,1);
   lcd.print("I2=");
@@ -403,25 +423,42 @@ void display_pg2() {
 }
 
 void display_pg3() {
-  lcd.print("Page 3");
+#ifdef DEBUG_SHOW_AI_RAW
+  lcd.print("V1=");
+  lcd.print(analogRead(BAT1_V_PIN));
+  lcd.print(" I1=");
+  lcd.print(analogRead(BAT1_I_PIN));  
+  
+  lcd.setCursor(0,1);
+  lcd.print("V2=");
+  lcd.print(analogRead(BAT2_V_PIN));
+  lcd.print(" I2=");
+  lcd.print(analogRead(BAT2_I_PIN));
+#else
+  lcd.print("Solar Cars");
+  lcd.setCursor(0,1);
+  lcd.print("WTC Wodonga");
+#endif
 }
 
 // display tasks
-void display() {
-  lcd.clear();
+void display() { 
   lcd.setCursor(0,0);
   if (millis() >= nextDisplayPageChange) {
     nextDisplayPageChange = millis()+DISPLAY_PAGE_CHANGE_TIME;
     displayPageNumber++;
+    lcd.clear();
   }
   switch(displayPageNumber) {
     case 2:
       display_pg2();
       break;
     case 3:
+      if (bat_alarm) lcd.noBacklight();
       display_pg3();
       break;     
     default:        // default applies to "case 1:" and will reset displayPageNumber when > 3 
+      lcd.backlight();
       displayPageNumber=1;
       display_pg1();
       break; 
