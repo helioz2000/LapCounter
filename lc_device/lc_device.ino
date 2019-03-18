@@ -1,5 +1,5 @@
 /*
- *  ESP8266_Telemetry.ino
+ *  lc_device.ino
  *
  *  Hardware: WeMos D1 R1
  *  Wiring:
@@ -589,5 +589,3 @@ void esp_info() {
   mylog("VCC: %.2fV\n", (float)ESP.getVcc() / 896 );
 #endif
 }
-
-
