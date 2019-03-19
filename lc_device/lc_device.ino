@@ -79,7 +79,7 @@ bool t_host_found = false;                      // Telemetry host has been found
 const int telemetry_default_port = 2006;        // May be overridden by telemetry host discovery
 unsigned int t_port = telemetry_default_port;   // Port for data exchange
 const unsigned int bc_port = 2000;              // Broadcast port for telemetry host discovery
-const long T_HOST_DISCOVERY_TIMEOUT = 1000;    // Timeout for telemetry host discovery
+const long T_HOST_DISCOVERY_TIMEOUT = 15000;    // Timeout for telemetry host discovery
 
 const int T_HOST_NAME_MAX_LEN = 30;
 char t_host_name[T_HOST_NAME_MAX_LEN];    // storage for host name
@@ -95,10 +95,11 @@ const byte PACKET_TYPE_KEEP_ALIVE = 0;  // packet types
 const byte PACKET_TYPE_LAP_COUNT = 1;   // being sent 
 const byte PACKET_TYPE_TELEMETRY = 2;   // to the telemetry host
 
-volatile unsigned long lap_count_millis = 0;  // set to curent millis reading on lap counter interrupt, reset to zero when processed 
+volatile unsigned long lap_count_event_time = 0;  // set to curent millis reading on lap counter interrupt, reset to zero when processed 
 bool lap_count_signal_shadow = false;
-long lap_count_signal_block_time = 10000;     // ms for lap count sensor blocking (possible multiple signals)
-long lap_count_signal_block_timeout;
+unsigned long lap_count_signal_block_time = 10000;     // ms for lap count sensor blocking (possible multiple signals)
+unsigned long lap_count_signal_block_timeout;
+//long lap_count_signal_time;               // time when lapcount event occured
 
 uint8_t macAddr[6];                       // MAC address of this device
 
@@ -132,7 +133,7 @@ void ICACHE_RAM_ATTR onTimerISR() {
  * triggered by a signal on lap counter digital input
  */
 void ICACHE_RAM_ATTR onLapCountISR() {
-  lap_count_millis = millis();
+  lap_count_event_time = millis();
 }
 
 // ********************************************************************************
@@ -178,7 +179,7 @@ void loop() {
 
   if (!test_once) {
     test_once = true;
-    send_lapcount_packet();
+    send_lapcount_http(millis());
   }
 
   // check for user input
@@ -194,17 +195,19 @@ void loop() {
       send_telemetry();
     }
   }
+  
   // process lapcount event
-  if (lap_count_millis != 0) {
+  if (lap_count_event_time != 0) {
     if (!lap_count_signal_shadow) {
       mylog("Lap Count Sensor Int\n");
       lap_count_signal_shadow = true;
       lap_count_signal_block_timeout = millis() + lap_count_signal_block_time;
-      send_lapcount_packet();
+      send_lapcount_http(lap_count_event_time);
+      send_lapcount_udp();
     } else {
       if(millis() >= lap_count_signal_block_timeout) {
         //lap_count_signal_block_timeout = 0;
-        lap_count_millis = 0;
+        lap_count_event_time = 0;
         lap_count_signal_shadow = false;
       }
     }   
@@ -237,46 +240,54 @@ void process_rx_packet() {
 //    Lap Count functions
 // ********************************************************************************
 
-bool send_lapcount_packet() {
-  bool retVal = false;
-  int i;
-  LONGUNION_t elapsed_time;
-
+bool send_lapcount_http(unsigned long event_time) {
+  unsigned long http_start_time = millis();
+  mylog("Sending lapcount http request .... ");
   if (server.connect(serverName, serverPort)) {
-    mylog("connected to %s\n", serverName);
+    //mylog("connected to %s\n", serverName);
+    // construct data string
+    // 1: our wifi hostname
+    String httpStr = String(wifi_hostname);
+    // 2: event age
+    httpStr += "+";
+    httpStr += String((millis() - event_time));
 
-    mylog("[Sending a request]\n");
-
-    /*
-    server.print(String("GET /") + " HTTP/1.1\r\n" +
-                 "Host: " + serverName + "\r\n" +
-                 "Connection: close\r\n" +
-                 "\r\n"
-                );
-    */            
-    server.print(String("GET /") + serverURL + wifi_hostname + "+0" + " HTTP/1.1\r\n" + "Host: " + serverName + "\r\n" + "Connection: close\r\n" + "\r\n");
-    //server.print(String("GET /") + serverURL + "LC12" + "+0" + " HTTP/1.1\r\n" + "Host: " + serverName + "\r\n" + "Connection: close\r\n" + "\r\n");
-    mylog("[Response:]\n");
+    // send string to server encapsulated in HTTP GET request
+    server.print(String("GET /") + serverURL + httpStr + " HTTP/1.1\r\n" + "Host: " + serverName + "\r\n" + "Connection: close\r\n" + "\r\n");
+    //mylog("[Response:]\n");
     while (server.connected() || server.available())
     {
       if (server.available())
       {
         String line = server.readStringUntil('\n');
+        // loof for reply LC:
         if ( (line[0] == 'L') && (line[1] == 'C') && (line[2] == ':') ) {
-          mylog("--->> %s", line.c_str());
+          //mylog("--->> %s", line.c_str());
+          line.remove(2,1);
+          if (line.compareTo(String(wifi_hostname)) == 0) {
+            mylog("lap count http ACK received\n");
+          } else {
+            mylog("lap count http error - received: <%s>, looking for: <%s>]\n", line.c_str(), wifi_hostname); 
+          }
         }
         //mylog("%s\n",line.c_str());
       }
     }
     server.stop();
-    mylog("\n[Disconnected]");
+    //mylog("\n[Disconnected]\n");
   }
   else
   {
-    mylog("connection failed!]");
+    mylog("lap count http error: connection to <%s:%d> failed\n", serverName, serverPort);
     server.stop();
   }
-  
+  mylog("HTTP execution time: %dms\n", millis()-http_start_time);
+}
+
+bool send_lapcount_udp() {
+  bool retVal = false;
+  int i;
+  LONGUNION_t elapsed_time;
   
   if (!t_host_found) return retVal;
   
@@ -288,9 +299,9 @@ bool send_lapcount_packet() {
   lcPacket[6] = udp_sequence++;
   lcPacket[7] = PACKET_TYPE_LAP_COUNT;
 
-  lap_count_millis -= 255;
+  lap_count_event_time -= 255;
   
-  elapsed_time.l_value = millis() - lap_count_millis;
+  elapsed_time.l_value = millis() - lap_count_event_time;
   for (i = 0; i < 4; i++) {
     lcPacket[8+i] = elapsed_time.bytes[i];
   }
@@ -303,7 +314,7 @@ bool send_lapcount_packet() {
     for (i=0; i<12; i++) {
       mylog("%02X,", lcPacket[i]);
     }
-    mylog(" <%d> <%d> <%d>\n", millis(), lap_count_millis, elapsed_time.l_value);
+    mylog(" <%d> <%d> <%d>\n", millis(), lap_count_event_time, elapsed_time.l_value);
   }
   Udp.endPacket();
 send_done:
@@ -339,7 +350,7 @@ void send_telemetry() {
   if (!Udp.endPacket()) {
     UI.println("Udp.endPacket failed");
   } else {
-    mylog("%d: Telemerty Packet %d sent\n", millis(), udp_sequence-1);
+    mylog("%d: Telemetry Packet %d sent\n", millis(), udp_sequence-1);
   }
 send_done:
   digitalWrite(LED_BUILTIN, LED_OFF);
@@ -376,8 +387,7 @@ bool discover_telemetry_host(long timeout) {
   // Start listening on broadcast port
   if (Udp.begin(bc_port) != 1) {
     return false;
-  }
-  
+  } 
   
   long timeout_value = millis() + timeout;
   int packetSize;
@@ -397,7 +407,7 @@ bool discover_telemetry_host(long timeout) {
       }
     }
     digitalWrite(LED_BUILTIN, bitRead(flash_byte, FLASH_1S));
-    // Check for user input whci indicates the user wants to change WiFi network
+    // Check for user input which indicates the user wants to change WiFi network
     if (UI.available()) return false;
   }
   return false;
@@ -431,6 +441,7 @@ bool validateTelemetryHost(int bufsize) {
     tokencount++;
     switch(tokencount) {
       case 1:
+        mylog("Token1: <%s>\n", token);
         break;
       case 2:
         port = atoi(token);
@@ -542,7 +553,7 @@ start_again:
       UI.println("Telemetry host found");
       nextTX = millis() + TX_INTERVAL;
     } else {
-      UI.println("Telemetry host timeout -> telemtry disabled.");
+      UI.println("Telemetry host timeout -> telemetry disabled.");
     }
     // allow user to interrupt and select different network
     if (scan_user_input()) {
