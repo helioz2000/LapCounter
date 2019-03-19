@@ -1,7 +1,10 @@
 /*
  *  lc_device.ino
  *
- *  Hardware: WeMos D1 R1
+ *  Hardware: WeMos D1 R1 (under ESP8266 boards)
+ *  
+ *  WiFi library doc: https://arduino-esp8266.readthedocs.io/en/latest/libraries.html#wifi-esp8266wifi-library
+ *  
  *  Wiring:
  *  D3 - Lap count sensor, switches to ground.
  *  
@@ -35,6 +38,7 @@ const byte LAP_COUNT_SENSOR_PIN = 0;
 #include <ESP8266WiFi.h>
 #include <WifiUdp.h>
 WiFiUDP Udp;
+WiFiClient server;
 
 #define UI Serial         // user interface
 
@@ -47,7 +51,15 @@ ADC_MODE(ADC_VCC);    // switch analog input to read VCC
 
 char wifi_ssid[32];                   // storage for WiFi SSID
 char wifi_passphrase[32];;            // storage for WiFi passphrase
-#define WIFI_CONNECT_TIMEOUT 15000    // max connection time for WiFi timeout
+char wifi_hostname[12];               // storage for WiFi hostname (LCxxxxxx)
+const unsigned long WIFI_CONNECT_TIMEOUT=15000;    // max connection time for WiFi timeout
+
+// server 
+const char serverName[] = "support.rossw.net"; //192.168.1.8";
+const char serverURL[] = "erwintest?";
+const int serverPort = 80;
+
+bool test_once = false;
 
 typedef union {
   long l_value;
@@ -67,7 +79,7 @@ bool t_host_found = false;                      // Telemetry host has been found
 const int telemetry_default_port = 2006;        // May be overridden by telemetry host discovery
 unsigned int t_port = telemetry_default_port;   // Port for data exchange
 const unsigned int bc_port = 2000;              // Broadcast port for telemetry host discovery
-const long T_HOST_DISCOVERY_TIMEOUT = 15000;    // Timeout for telemetry host discovery
+const long T_HOST_DISCOVERY_TIMEOUT = 1000;    // Timeout for telemetry host discovery
 
 const int T_HOST_NAME_MAX_LEN = 30;
 char t_host_name[T_HOST_NAME_MAX_LEN];    // storage for host name
@@ -133,15 +145,21 @@ void setup() {
 
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(LAP_COUNT_SENSOR_PIN, INPUT_PULLUP);
-  
-  // We start by connecting to a WiFi network
-  mylog("\n\n\nEnter +++ to activate WiFi config mode.\nConnecting to ", WiFi.SSID().c_str());
-  WiFi.begin();
-  
-  digitalWrite(LED_BUILTIN, LED_ON);
 
   // get MAC address to be used as ID
   WiFi.macAddress(macAddr);
+
+  // set hostname
+  sprintf(wifi_hostname, "LC%02X%02X%02X", macAddr[3], macAddr[4], macAddr[5]);
+  mylog("Setting hostname to %s", wifi_hostname);
+  WiFi.hostname(wifi_hostname);
+  
+  // We start by connecting to a WiFi network
+  mylog("\n\n\nEnter +++ to activate WiFi config mode.\nConnecting to %s", WiFi.SSID().c_str());
+  
+  WiFi.begin();
+  
+  digitalWrite(LED_BUILTIN, LED_ON);
   
   // configure time interrupt
   timer1_attachInterrupt(onTimerISR);
@@ -149,14 +167,18 @@ void setup() {
   timer1_write( 31250 * 5); //31250 us
 
   // configure lap counter input interrupt
-  attachInterrupt(digitalPinToInterrupt(LAP_COUNT_SENSOR_PIN), onLapCountISR, FALLING);
-  
+  attachInterrupt(digitalPinToInterrupt(LAP_COUNT_SENSOR_PIN), onLapCountISR, FALLING); 
 }
 
 void loop() {
   // establish WiFi if not connected
   if (WiFi.status() != WL_CONNECTED) {
     wait_for_wifi();
+  }
+
+  if (!test_once) {
+    test_once = true;
+    send_lapcount_packet();
   }
 
   // check for user input
@@ -166,11 +188,12 @@ void loop() {
   }
 
   // send telemetry at regular interval
-  if (millis() >= nextTX) {
-    nextTX += TX_INTERVAL;
-    send_telemetry();
+  if (t_host_found) {
+    if (millis() >= nextTX) {
+      nextTX += TX_INTERVAL;
+      send_telemetry();
+    }
   }
-
   // process lapcount event
   if (lap_count_millis != 0) {
     if (!lap_count_signal_shadow) {
@@ -218,8 +241,45 @@ bool send_lapcount_packet() {
   bool retVal = false;
   int i;
   LONGUNION_t elapsed_time;
+
+  if (server.connect(serverName, serverPort)) {
+    mylog("connected to %s\n", serverName);
+
+    mylog("[Sending a request]\n");
+
+    /*
+    server.print(String("GET /") + " HTTP/1.1\r\n" +
+                 "Host: " + serverName + "\r\n" +
+                 "Connection: close\r\n" +
+                 "\r\n"
+                );
+    */            
+    server.print(String("GET /") + serverURL + wifi_hostname + "+0" + " HTTP/1.1\r\n" + "Host: " + serverName + "\r\n" + "Connection: close\r\n" + "\r\n");
+    //server.print(String("GET /") + serverURL + "LC12" + "+0" + " HTTP/1.1\r\n" + "Host: " + serverName + "\r\n" + "Connection: close\r\n" + "\r\n");
+    mylog("[Response:]\n");
+    while (server.connected() || server.available())
+    {
+      if (server.available())
+      {
+        String line = server.readStringUntil('\n');
+        if ( (line[0] == 'L') && (line[1] == 'C') && (line[2] == ':') ) {
+          mylog("--->> %s", line.c_str());
+        }
+        //mylog("%s\n",line.c_str());
+      }
+    }
+    server.stop();
+    mylog("\n[Disconnected]");
+  }
+  else
+  {
+    mylog("connection failed!]");
+    server.stop();
+  }
+  
   
   if (!t_host_found) return retVal;
+  
   if (!Udp.beginPacket(t_host_ip, t_port)) {
     UI.println("Udp.beginPacket failed");
     goto send_done;
@@ -449,20 +509,20 @@ startAgain:
  * Once the WiFi is conneced we wait for a broadcast packet from the telemetry host 
  */
 void wait_for_wifi() {
-  long wifi_timeout;
+  long timeout;
 start_again:  
-  wifi_timeout = millis() + WIFI_CONNECT_TIMEOUT;
+  timeout = millis() + WIFI_CONNECT_TIMEOUT;
   while (WiFi.status() != WL_CONNECTED) {
     delay(250);             // do not remove, no delay will crash the ESP8266
     digitalWrite(LED_BUILTIN, bitRead(flash_byte, FLASH_250));
-    if (millis() >= wifi_timeout) {
+    if (millis() >= timeout) {
       mylog("\nWiFi timeout trying to connect to %s\n", WiFi.SSID().c_str());
       wifi_select_network();
-      wifi_timeout = millis() + WIFI_CONNECT_TIMEOUT;
+      timeout = millis() + WIFI_CONNECT_TIMEOUT;
     }
     if (scan_user_input()) {
       wifi_select_network();
-      wifi_timeout = millis() + WIFI_CONNECT_TIMEOUT;
+      timeout = millis() + WIFI_CONNECT_TIMEOUT;
     }
   }
   //mylog("WiFi Connected, [%02X:%02X:%02X:%02X:%02X:%02X]\n", macAddr[0], macAddr[1], macAddr[2], macAddr[3], macAddr[4], macAddr[5]);
@@ -475,20 +535,22 @@ start_again:
   show_wifi_info();
   esp_info();
 
-  UI.print("Waiting for telemetry host broadcast ");
-  while (!t_host_found ) {   
-    UI.print(".");
+  UI.println("Waiting for telemetry host broadcast");
+  //while (!t_host_found ) {   
+  //  UI.print(".");
     if (discover_telemetry_host(T_HOST_DISCOVERY_TIMEOUT)) {
-      UI.println(" ");
+      UI.println("Telemetry host found");
+      nextTX = millis() + TX_INTERVAL;
+    } else {
+      UI.println("Telemetry host timeout -> telemtry disabled.");
     }
     // allow user to interrupt and select different network
     if (scan_user_input()) {
       UI.println(" ");
       wifi_select_network();
       goto start_again;
-    }   
-  }
-  nextTX = millis() + TX_INTERVAL;
+    }
+  //} 
 }
 
 
