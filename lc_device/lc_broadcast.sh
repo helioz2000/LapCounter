@@ -13,7 +13,11 @@ HOSTID="LC1"
 HOSTNAME=`hostname`
 # broadcast port (the client listens for broadcast packets on this port)
 BC_PORT=2000
-#broadcast interval in seconds (must be less than the timneout specified in the client)
+# server URL
+SERVERURL="support.rossw.net"
+SERVERPAGE="erwintest?"
+SERVERPORT=80
+#broadcast interval in seconds (must be less than the timeout specified in the client)
 INTERVAL=10
 
 # wait for system to settle down
@@ -26,7 +30,7 @@ echo "Broadcasting on $bc_address"
 # broadcast endless loop
 while true
 do
-        echo -e "LC1\t2006\t$HOSTNAME" | /bin/nc -ub -w0 $bc_address $BC_PORT
+        echo -e "LC1\t2006\t$HOSTNAME\t$SERVERURL\t$SERVERPORT\t$SERVERPAGE" | /bin/nc -ub -w0 $bc_address $BC_PORT
         echo "Broadcast sent.."
         sleep $INTERVAL
 done
