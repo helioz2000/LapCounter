@@ -55,9 +55,9 @@ char wifi_hostname[12];               // storage for WiFi hostname (LCxxxxxx)
 const unsigned long WIFI_CONNECT_TIMEOUT=15000;    // max connection time for WiFi timeout
 
 // server 
-const char serverName[] = "support.rossw.net"; //192.168.1.8";
-const char serverURL[] = "erwintest?";
-const int serverPort = 80;
+String http_server_domain = "support.rossw.net"; //192.168.1.8";
+String http_server_file = "erwintest?";
+int http_server_port = 80;
 
 bool test_once = false;
 
@@ -243,7 +243,7 @@ void process_rx_packet() {
 bool send_lapcount_http(unsigned long event_time) {
   unsigned long http_start_time = millis();
   mylog("Sending lapcount http request .... ");
-  if (server.connect(serverName, serverPort)) {
+  if (server.connect(http_server_domain.c_str(), http_server_port)) {
     //mylog("connected to %s\n", serverName);
     // construct data string
     // 1: our wifi hostname
@@ -253,7 +253,7 @@ bool send_lapcount_http(unsigned long event_time) {
     httpStr += String((millis() - event_time));
 
     // send string to server encapsulated in HTTP GET request
-    server.print(String("GET /") + serverURL + httpStr + " HTTP/1.1\r\n" + "Host: " + serverName + "\r\n" + "Connection: close\r\n" + "\r\n");
+    server.print(String("GET /") + http_server_file + httpStr + " HTTP/1.1\r\n" + "Host: " + http_server_domain + "\r\n" + "Connection: close\r\n" + "\r\n");
     //mylog("[Response:]\n");
     while (server.connected() || server.available())
     {
@@ -278,7 +278,7 @@ bool send_lapcount_http(unsigned long event_time) {
   }
   else
   {
-    mylog("lap count http error: connection to <%s:%d> failed\n", serverName, serverPort);
+    mylog("lap count http error: connection to <%s:%d> failed\n", http_server_domain.c_str(), http_server_port);
     server.stop();
   }
   mylog("HTTP execution time: %dms\n", millis()-http_start_time);
@@ -440,10 +440,10 @@ bool validateTelemetryHost(int bufsize) {
   while (token != 0) {
     tokencount++;
     switch(tokencount) {
-      case 1:
+      case 1:   // Host Identifier (e.g. "LC1")
         mylog("Token1: <%s>\n", token);
         break;
-      case 2:
+      case 2:   // Telemetry port (on telemetry server)
         port = atoi(token);
         if (port > 0 && port <= 65535 ) {
           t_port = port;
@@ -452,9 +452,18 @@ bool validateTelemetryHost(int bufsize) {
         }
         mylog("Telemetry port: %d\n",  t_port);
         break;
-      case 3:
+      case 3:   // Hostname of telemetry broadacst server
         strncpy(t_host_name, token, T_HOST_NAME_MAX_LEN);
         mylog("Telemetry host: %s\n", t_host_name );
+        break;
+      case 4:   // HTTP server domain ("support.rossw.net")
+        http_server_domain = String(token);
+        break;
+      case 5:   // HTTP server port (80)
+        http_server_port=atoi(token);
+        break;
+      case 6:   // HTTP server page ("testpage?")
+        http_server_file = String(token);
         break;
       default:
         // unknown token
