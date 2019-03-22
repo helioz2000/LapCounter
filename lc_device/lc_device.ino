@@ -192,7 +192,7 @@ void loop() {
   if (t_host_found) {
     if (millis() >= nextTX) {
       nextTX += TX_INTERVAL;
-      send_telemetry();
+      send_telemetry_keepalive();
     }
   }
   
@@ -326,34 +326,50 @@ send_done:
 // ********************************************************************************
 
 /*
+ * send keepalive packet
+ */
+void send_telemetry_keepalive() {
+  int packet_length = make_telemetry_header(PACKET_TYPE_TELEMETRY);
+  send_telemetry_packet(packet_length);
+}
+
+/*
  * send telemetry data to host
  */
-void send_telemetry() {
-  int txPacketSize = 0;
-  if (!t_host_found) return;
+bool send_telemetry_packet(int packet_length) {
+  bool retVal = false;
+  if (!t_host_found) return retVal;
+  if (packet_length < 1) return retVal;
   if (!Udp.beginPacket(t_host_ip, t_port)) {
-    UI.println("Udp.beginPacket failed");
+    UI.println("Telemetry: Udp.beginPacket failed");
     goto send_done;
   }
-
-  memcpy(txPacket, macAddr, sizeof(macAddr) );
-  txPacket[6] = udp_sequence++;
-  txPacket[7] = PACKET_TYPE_TELEMETRY;
-  txPacketSize = 8;
-  
+   
   digitalWrite(LED_BUILTIN, LED_ON);
-  if (Udp.write(txPacket, txPacketSize) != txPacketSize) {
-    UI.println("Udp.write failed");
+  if ( Udp.write(txPacket, packet_length) != packet_length)  {
+    UI.println("Telemetry: Udp.write failed");
     goto send_done;
   }
   
   if (!Udp.endPacket()) {
-    UI.println("Udp.endPacket failed");
+    UI.println("Telemetry: Udp.endPacket failed");
   } else {
     mylog("%d: Telemetry Packet %d sent\n", millis(), udp_sequence-1);
+    retVal = true;
   }
+  
 send_done:
   digitalWrite(LED_BUILTIN, LED_OFF);
+  return retVal;
+}
+
+/*
+ * make telemetry header
+ * returns length of assembled header in txPacket variable
+ */
+int make_telemetry_header(byte packet_type) {
+  sprintf(txPacket, "%d\t%d\t%0X%0X%0X\n", packet_type, udp_sequence++, macAddr[3], macAddr[4], macAddr[5] );
+  return strlen(txPacket);
 }
 
 // ********************************************************************************
@@ -457,13 +473,14 @@ bool validateTelemetryHost(int bufsize) {
         mylog("Telemetry host: %s\n", t_host_name );
         break;
       case 4:   // HTTP server domain ("support.rossw.net")
-        http_server_domain = String(token);
+        http_server_domain = String(token);       
         break;
       case 5:   // HTTP server port (80)
         http_server_port=atoi(token);
         break;
       case 6:   // HTTP server page ("testpage?")
         http_server_file = String(token);
+        mylog("HTTP Server: %s:%d/%s \n", http_server_domain.c_str(), http_server_port, http_server_file.c_str() );
         break;
       default:
         // unknown token
