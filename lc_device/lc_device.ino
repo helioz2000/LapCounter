@@ -55,9 +55,9 @@ char wifi_hostname[12];               // storage for WiFi hostname (LCxxxxxx)
 const unsigned long WIFI_CONNECT_TIMEOUT=15000;    // max connection time for WiFi timeout
 
 // server 
-String http_server_domain = "support.rossw.net"; //192.168.1.8";
-String http_server_file = "erwintest?";
-int http_server_port = 80;
+String http_server_domain;
+String http_server_file;
+int http_server_port = 0;
 
 bool test_once = false;
 
@@ -161,7 +161,7 @@ void setup() {
   WiFi.begin();
   
   digitalWrite(LED_BUILTIN, LED_ON);
-  
+
   // configure time interrupt
   timer1_attachInterrupt(onTimerISR);
   timer1_enable(TIM_DIV16, TIM_EDGE, TIM_LOOP);   // 5 ticks / us
@@ -180,6 +180,7 @@ void loop() {
   if (!test_once) {
     test_once = true;
     send_lapcount_http(millis());
+    send_lapcount_udp();
   }
 
   // check for user input
@@ -193,13 +194,14 @@ void loop() {
     if (millis() >= nextTX) {
       nextTX += TX_INTERVAL;
       send_telemetry_keepalive();
+      // mylog("Lap Count Sensor = %d\n", digitalRead(LAP_COUNT_SENSOR_PIN));
     }
   }
   
   // process lapcount event
   if (lap_count_event_time != 0) {
     if (!lap_count_signal_shadow) {
-      mylog("Lap Count Sensor Int\n");
+      mylog("Lap Count Sensor Interrupt <%d>\n", digitalRead(LAP_COUNT_SENSOR_PIN));
       lap_count_signal_shadow = true;
       lap_count_signal_block_timeout = millis() + lap_count_signal_block_time;
       send_lapcount_http(lap_count_event_time);
@@ -241,84 +243,82 @@ void process_rx_packet() {
 // ********************************************************************************
 
 bool send_lapcount_http(unsigned long event_time) {
+  int line_no = 0;
+  char *token;
+  char line_str[32];
+  int response_status_code;
   unsigned long http_start_time = millis();
-  mylog("Sending lapcount http request .... ");
-  if (server.connect(http_server_domain.c_str(), http_server_port)) {
-    //mylog("connected to %s\n", serverName);
-    // construct data string
-    // 1: our wifi hostname
-    String httpStr = String(wifi_hostname);
-    // 2: event age
-    httpStr += "+";
-    httpStr += String((millis() - event_time));
-
-    // send string to server encapsulated in HTTP GET request
-    server.print(String("GET /") + http_server_file + httpStr + " HTTP/1.1\r\n" + "Host: " + http_server_domain + "\r\n" + "Connection: close\r\n" + "\r\n");
-    //mylog("[Response:]\n");
-    while (server.connected() || server.available())
-    {
-      if (server.available())
-      {
-        String line = server.readStringUntil('\n');
-        // loof for reply LC:
-        if ( (line[0] == 'L') && (line[1] == 'C') && (line[2] == ':') ) {
-          //mylog("--->> %s", line.c_str());
-          line.remove(2,1);
-          if (line.compareTo(String(wifi_hostname)) == 0) {
-            mylog("lap count http ACK received\n");
-          } else {
-            mylog("lap count http error - received: <%s>, looking for: <%s>]\n", line.c_str(), wifi_hostname); 
-          }
-        }
-        //mylog("%s\n",line.c_str());
-      }
-    }
-    server.stop();
-    //mylog("\n[Disconnected]\n");
-  }
-  else
-  {
+  mylog("Sending lapcount http request .... \n");
+  if (! server.connect(http_server_domain.c_str(), http_server_port)) {
     mylog("lap count http error: connection to <%s:%d> failed\n", http_server_domain.c_str(), http_server_port);
     server.stop();
+    return false;
   }
+  
+  //mylog("connected to %s\n", serverName);
+  // construct data string
+  // 1: our wifi hostname
+  String httpStr = String(wifi_hostname);
+  // 2: event age
+  httpStr += "+";
+  httpStr += String((millis() - event_time));
+
+  // send string to server encapsulated in HTTP GET request
+  server.print(String("GET /") + http_server_file + httpStr + " HTTP/1.1\r\n" + "Host: " + http_server_domain + "\r\n" + "Connection: close\r\n" + "\r\n");
+  //mylog("[Response:]\n");
+  while (server.connected() || server.available()) {
+    if (server.available()) {
+      String line = server.readStringUntil('\n');
+      line_no++;
+      // check first line for reply success
+      if (line_no == 1) {
+        strncpy(line_str,line.c_str(), 31);
+        // look for second space separated token
+        token = strtok(line_str, " "); token = strtok(NULL, " ");
+        response_status_code = atoi(token);
+        //mylog("token: %s\n",token);
+        // check response status is OK
+        if ( (response_status_code < 200) || (response_status_code > 299) ) {
+          mylog("error response received from server: <%s>\n", line.c_str());
+          break;
+        } else {
+          //mylog("http server response: %d\n", response_status_code);
+        }
+      }
+      
+      // look for reply LC:
+      if ( (line[0] == 'L') && (line[1] == 'C') && (line[2] == ':') ) {
+        //mylog("--->> %s", line.c_str());
+        line.remove(2,1);
+        if (line.compareTo(String(wifi_hostname)) == 0) {
+          //mylog("lap count http ACK received\n");
+        } else {
+          mylog("lap count http error - received: <%s>, looking for: <%s>]\n", line.c_str(), wifi_hostname); 
+        }
+      }
+      //mylog("%s\n",line.c_str());
+    }
+  }
+  server.stop();
+  //mylog("\n[Disconnected]\n");
   mylog("HTTP execution time: %dms\n", millis()-http_start_time);
+  return true;
 }
 
 bool send_lapcount_udp() {
-  bool retVal = false;
-  int i;
+  char strbuf[16];
   LONGUNION_t elapsed_time;
-  
-  if (!t_host_found) return retVal;
-  
-  if (!Udp.beginPacket(t_host_ip, t_port)) {
-    UI.println("Udp.beginPacket failed");
-    goto send_done;
-  }
-  memcpy(lcPacket, macAddr, sizeof(macAddr) );
-  lcPacket[6] = udp_sequence++;
-  lcPacket[7] = PACKET_TYPE_LAP_COUNT;
 
-  lap_count_event_time -= 255;
+  if (!t_host_found) return false;
   
+  int packet_length = make_telemetry_header(PACKET_TYPE_LAP_COUNT);
   elapsed_time.l_value = millis() - lap_count_event_time;
-  for (i = 0; i < 4; i++) {
-    lcPacket[8+i] = elapsed_time.bytes[i];
-  }
-  if (Udp.write(lcPacket, 12) != 12) {
-    UI.println("Udp.write failed");
-    goto send_done;
-  } else {
-    retVal = true;
-    mylog("UDP sent: ");
-    for (i=0; i<12; i++) {
-      mylog("%02X,", lcPacket[i]);
-    }
-    mylog(" <%d> <%d> <%d>\n", millis(), lap_count_event_time, elapsed_time.l_value);
-  }
-  Udp.endPacket();
-send_done:
-  return retVal;  
+  //lap_count_event_time -= 255;
+  sprintf(strbuf, "\t%d\n", elapsed_time);
+  strcat(txPacket, strbuf);
+  mylog("lapcount UDP: %s", txPacket);
+  return send_telemetry_packet(strlen(txPacket));
+
 }
 
 // ********************************************************************************
@@ -330,7 +330,8 @@ send_done:
  */
 void send_telemetry_keepalive() {
   int packet_length = make_telemetry_header(PACKET_TYPE_TELEMETRY);
-  send_telemetry_packet(packet_length);
+  strcat(txPacket, "\n");
+  send_telemetry_packet(strlen(txPacket));
 }
 
 /*
@@ -368,7 +369,7 @@ send_done:
  * returns length of assembled header in txPacket variable
  */
 int make_telemetry_header(byte packet_type) {
-  sprintf(txPacket, "%d\t%d\t%0X%0X%0X\n", packet_type, udp_sequence++, macAddr[3], macAddr[4], macAddr[5] );
+  sprintf(txPacket, "%d\t%d\t%02X%02X%02X", packet_type, udp_sequence++, macAddr[3], macAddr[4], macAddr[5] );
   return strlen(txPacket);
 }
 
@@ -445,7 +446,7 @@ bool validateTelemetryHost(int bufsize) {
   // We have a valid ID, record the host IP
   t_host_ip = Udp.remoteIP();
   t_host_found = true;
-  mylog("Telemetry host: ");
+  mylog("Telemetry host IP: ");
   UI.println(t_host_ip);
 
   // check packet for more host information
@@ -457,7 +458,7 @@ bool validateTelemetryHost(int bufsize) {
     tokencount++;
     switch(tokencount) {
       case 1:   // Host Identifier (e.g. "LC1")
-        mylog("Token1: <%s>\n", token);
+        mylog("Telemetry host ID: <%s>\n", token);
         break;
       case 2:   // Telemetry port (on telemetry server)
         port = atoi(token);
@@ -480,7 +481,7 @@ bool validateTelemetryHost(int bufsize) {
         break;
       case 6:   // HTTP server page ("testpage?")
         http_server_file = String(token);
-        mylog("HTTP Server: %s:%d/%s \n", http_server_domain.c_str(), http_server_port, http_server_file.c_str() );
+        mylog("HTTP Server: %s:%d/%s\n", http_server_domain.c_str(), http_server_port, http_server_file.c_str() );
         break;
       default:
         // unknown token

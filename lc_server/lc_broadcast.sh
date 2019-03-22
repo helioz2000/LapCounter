@@ -13,6 +13,8 @@ HOSTID="LC1"
 HOSTNAME=`hostname`
 # broadcast port (the client listens for broadcast packets on this port)
 BC_PORT=2000
+# telemetry port (where the server listens for telemetry packets)
+TELEMETRY_PORT=2006
 # server URL
 SERVERURL="support.rossw.net"
 SERVERPAGE="erwintest?"
@@ -30,7 +32,7 @@ echo "Broadcasting on $bc_address"
 # broadcast endless loop
 while true
 do
-        echo -e "LC1\t2006\t$HOSTNAME\t$SERVERURL\t$SERVERPORT\t$SERVERPAGE" | /bin/nc -ub -w0 $bc_address $BC_PORT
+        echo -e "$HOSTID\t$TELEMETRY_PORT\t$HOSTNAME\t$SERVERURL\t$SERVERPORT\t$SERVERPAGE\t" | /bin/nc -ub -w0 $bc_address $BC_PORT
         echo "Broadcast sent.."
         sleep $INTERVAL
 done

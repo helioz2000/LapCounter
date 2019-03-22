@@ -8,7 +8,7 @@
 #
 # After installing this file execute the following commands:
 # systemctl enable lc_broadcast.service
-# systemctl daemon-reloac
+# systemctl daemon-reload
 # systemctl start lc_broadcast.service
 #
 
