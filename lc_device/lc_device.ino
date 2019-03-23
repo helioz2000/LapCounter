@@ -58,8 +58,12 @@ const unsigned long WIFI_CONNECT_TIMEOUT=15000;    // max connection time for Wi
 String http_server_domain;
 String http_server_file;
 int http_server_port = 0;
+bool http_server_enable = false;
 
-bool test_once = false;
+// Infrared pulse detection parameters
+unsigned long ir_pulse_start, ir_pulse_length;
+const int IR_PULSE_MIN_LENGTH = 10;   //ms
+bool ir_pulse_active = false;
 
 typedef union {
   long l_value;
@@ -75,7 +79,7 @@ long nextTX;
 IPAddress t_host_ip = (127,0,0,1);              // IP of telemetry host, set by host discovery 
 const char t_host_id[] = {'L', 'C', '1'};       // ID for telemetry host (used host discovery)
 const int T_HOST_ID_LEN = 3;                    // length of host id
-bool t_host_found = false;                      // Telemetry host has been found
+bool t_host_enable = false;                     // Telemetry is enabled (host has been found)
 const int telemetry_default_port = 2006;        // May be overridden by telemetry host discovery
 unsigned int t_port = telemetry_default_port;   // Port for data exchange
 const unsigned int bc_port = 2000;              // Broadcast port for telemetry host discovery
@@ -129,7 +133,7 @@ void ICACHE_RAM_ATTR onTimerISR() {
 }
 
 /*
- * Interrupt Service Routine
+ * Interrupt Service Routine (disabled!)
  * triggered by a signal on lap counter digital input
  */
 void ICACHE_RAM_ATTR onLapCountISR() {
@@ -152,7 +156,7 @@ void setup() {
 
   // set hostname
   sprintf(wifi_hostname, "LC%02X%02X%02X", macAddr[3], macAddr[4], macAddr[5]);
-  mylog("Setting hostname to %s", wifi_hostname);
+  mylog("Setting this hostname to %s", wifi_hostname);
   WiFi.hostname(wifi_hostname);
   
   // We start by connecting to a WiFi network
@@ -168,7 +172,8 @@ void setup() {
   timer1_write( 31250 * 5); //31250 us
 
   // configure lap counter input interrupt
-  attachInterrupt(digitalPinToInterrupt(LAP_COUNT_SENSOR_PIN), onLapCountISR, FALLING); 
+  // disabled as it picks up sporadic pulses collected by the IR sensor board.
+  //attachInterrupt(digitalPinToInterrupt(LAP_COUNT_SENSOR_PIN), onLapCountISR, FALLING); 
 }
 
 void loop() {
@@ -177,42 +182,23 @@ void loop() {
     wait_for_wifi();
   }
 
-  if (!test_once) {
-    test_once = true;
-    send_lapcount_http(millis());
-    send_lapcount_udp();
-  }
-
   // check for user input
   if (scan_user_input()) {
     wifi_select_network();
     wait_for_wifi();
   }
 
-  // send telemetry at regular interval
-  if (t_host_found) {
-    if (millis() >= nextTX) {
-      nextTX += TX_INTERVAL;
-      send_telemetry_keepalive();
-      // mylog("Lap Count Sensor = %d\n", digitalRead(LAP_COUNT_SENSOR_PIN));
-    }
+ // send telemetry at interval
+  if (millis() >= nextTX) {
+    nextTX += TX_INTERVAL;
+    send_telemetry_keepalive();
   }
+
+  process_ir_signal();
   
   // process lapcount event
   if (lap_count_event_time != 0) {
-    if (!lap_count_signal_shadow) {
-      mylog("Lap Count Sensor Interrupt <%d>\n", digitalRead(LAP_COUNT_SENSOR_PIN));
-      lap_count_signal_shadow = true;
-      lap_count_signal_block_timeout = millis() + lap_count_signal_block_time;
-      send_lapcount_http(lap_count_event_time);
-      send_lapcount_udp();
-    } else {
-      if(millis() >= lap_count_signal_block_timeout) {
-        //lap_count_signal_block_timeout = 0;
-        lap_count_event_time = 0;
-        lap_count_signal_shadow = false;
-      }
-    }   
+    process_lap_count();
   }
 
   // receive UDP packets from host
@@ -222,6 +208,64 @@ void loop() {
       process_rx_packet();
     }
   }
+}
+
+/*
+ * process lap count event
+ * lap countign is blocked for a period of time to avoid multiple counts
+ * when we receive multiple close spaced pulses.
+ */
+void process_lap_count() {
+  if (!lap_count_signal_shadow) {
+    mylog("Lap Count Sensor Interrupt <%d>\n", digitalRead(LAP_COUNT_SENSOR_PIN));
+    lap_count_signal_shadow = true;
+    lap_count_signal_block_timeout = millis() + lap_count_signal_block_time;
+    send_lapcount_udp();
+    send_lapcount_http(lap_count_event_time);     
+  } else {
+    if(millis() >= lap_count_signal_block_timeout) {
+      lap_count_event_time = 0;
+      lap_count_signal_shadow = false;
+    }
+  } 
+}
+
+/*
+ * process infrared sensor signal
+ * - measure pulse length
+ * - trigger lap count event
+ * minimum pulse length must be reached before lap counter event is triggered.
+ * this prevents false triggers due to spurious pulses.
+ */
+void process_ir_signal() {
+    // measure pulse length
+  if (ir_pulse_active) {
+    // detect trailing edge
+    if (digitalRead(LAP_COUNT_SENSOR_PIN)) {
+      ir_pulse_active = false;
+      // report pulse length for valid pulses only
+      if (ir_pulse_length > IR_PULSE_MIN_LENGTH) {
+        mylog("Lap Count Sensor pulse length: %dms\n", ir_pulse_length);
+      }
+    } else {
+      // while pulse is active calculate current pulse length
+      ir_pulse_length = millis() - ir_pulse_start;
+      // has pulse reached min length?
+      if (ir_pulse_length >= IR_PULSE_MIN_LENGTH) {
+        // pulse start time is the lap count event time
+        lap_count_event_time = ir_pulse_start;
+        //mylog("Lap Count Sensor pulse length: %dms\n", ir_pulse_length);
+      }
+    } 
+  }
+
+  // IR pulse detect start when input goes low
+  if (!digitalRead(LAP_COUNT_SENSOR_PIN) && !ir_pulse_active) {
+    ir_pulse_start = millis();
+    ir_pulse_active = true;
+    ir_pulse_length = 0;
+  }
+ 
 }
 
 /*
@@ -239,7 +283,7 @@ void process_rx_packet() {
 }
 
 // ********************************************************************************
-//    Lap Count functions
+//    Lap Count server functions
 // ********************************************************************************
 
 bool send_lapcount_http(unsigned long event_time) {
@@ -247,6 +291,7 @@ bool send_lapcount_http(unsigned long event_time) {
   char *token;
   char line_str[32];
   int response_status_code;
+  if (!http_server_enable) return false;
   unsigned long http_start_time = millis();
   mylog("Sending lapcount http request .... \n");
   if (! server.connect(http_server_domain.c_str(), http_server_port)) {
@@ -309,7 +354,7 @@ bool send_lapcount_udp() {
   char strbuf[16];
   LONGUNION_t elapsed_time;
 
-  if (!t_host_found) return false;
+  if (!t_host_enable) return false;
   
   int packet_length = make_telemetry_header(PACKET_TYPE_LAP_COUNT);
   elapsed_time.l_value = millis() - lap_count_event_time;
@@ -339,7 +384,7 @@ void send_telemetry_keepalive() {
  */
 bool send_telemetry_packet(int packet_length) {
   bool retVal = false;
-  if (!t_host_found) return retVal;
+  if (!t_host_enable) return retVal;
   if (packet_length < 1) return retVal;
   if (!Udp.beginPacket(t_host_ip, t_port)) {
     UI.println("Telemetry: Udp.beginPacket failed");
@@ -355,7 +400,7 @@ bool send_telemetry_packet(int packet_length) {
   if (!Udp.endPacket()) {
     UI.println("Telemetry: Udp.endPacket failed");
   } else {
-    mylog("%d: Telemetry Packet %d sent\n", millis(), udp_sequence-1);
+    //mylog("%d: Telemetry Packet %d sent\n", millis(), udp_sequence-1);
     retVal = true;
   }
   
@@ -445,7 +490,7 @@ bool validateTelemetryHost(int bufsize) {
   }
   // We have a valid ID, record the host IP
   t_host_ip = Udp.remoteIP();
-  t_host_found = true;
+  t_host_enable = true;
   mylog("Telemetry host IP: ");
   UI.println(t_host_ip);
 
@@ -481,6 +526,7 @@ bool validateTelemetryHost(int bufsize) {
         break;
       case 6:   // HTTP server page ("testpage?")
         http_server_file = String(token);
+        http_server_enable = true;
         mylog("HTTP Server: %s:%d/%s\n", http_server_domain.c_str(), http_server_port, http_server_file.c_str() );
         break;
       default:
