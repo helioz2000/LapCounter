@@ -4,6 +4,9 @@
 #
 # UDP broadcast for Lap Counter host
 # This script needs to start on boot, see lc_broadcast.service
+#
+# Waits until a packet is received from the client
+# then sends config info to client(s) (via broadcast)
 
 # network device (may need to be adjusted to suit)
 DEV=eth0
@@ -32,9 +35,19 @@ echo "Broadcasting on $bc_address"
 # broadcast endless loop
 while true
 do
+    # wait for a packet to arrive at broadcast port
+    nc_output="$(/bin/nc -u -l -p $BC_PORT -w 0)"
+    # echo "packet received"
+    # split client string into array
+    read -r -a client_data <<< "$nc_output"
+    # check array size
+    # echo "array size: " ${#client_data[@]}
+    if [ ${#client_data[@]} -eq 1 ]; then
+        # send client config data packet
         echo -e "$HOSTID\t$TELEMETRY_PORT\t$HOSTNAME\t$SERVERURL\t$SERVERPORT\t$SERVERPAGE\t" | /bin/nc -ub -w0 $bc_address $BC_PORT
-        echo "Broadcast sent.."
-        sleep $INTERVAL
+        echo "answered request from " ${client_data[0]}
+    fi
+    # sleep $INTERVAL
 done
 
 echo "Broadcast exited"

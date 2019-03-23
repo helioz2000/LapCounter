@@ -52,6 +52,7 @@ ADC_MODE(ADC_VCC);    // switch analog input to read VCC
 char wifi_ssid[32];                   // storage for WiFi SSID
 char wifi_passphrase[32];;            // storage for WiFi passphrase
 char wifi_hostname[12];               // storage for WiFi hostname (LCxxxxxx)
+IPAddress wifi_broadcast_ip;          // broadcast Wifi IP address (calculated)
 const unsigned long WIFI_CONNECT_TIMEOUT=15000;    // max connection time for WiFi timeout
 
 // server 
@@ -435,6 +436,34 @@ bool setup_t_port_listening () {
   return true;
 }
 
+bool send_host_discovery_request() {
+  int packet_length;
+
+  // send config request
+  if (!Udp.beginPacket(wifi_broadcast_ip, bc_port)) {
+    UI.println("Telemetry1: Udp.beginPacket failed");
+    goto send_done;
+  }
+   
+  digitalWrite(LED_BUILTIN, LED_ON);
+
+  sprintf(txPacket, "%s\n", wifi_hostname);
+  packet_length = strlen(txPacket);
+  
+  if ( Udp.write(txPacket, packet_length) != packet_length)  {
+    UI.println("Telemetry1: Udp.write failed");
+  }
+
+send_done:
+
+  if (!Udp.endPacket()) {
+    UI.println("Telemetry1: Udp.endPacket failed");
+  } 
+
+  digitalWrite(LED_BUILTIN, LED_OFF);
+
+}
+
 /*
  * Wait for broadcast from telemetry host
  * timeout: timeout in ms
@@ -445,6 +474,8 @@ bool discover_telemetry_host(long timeout) {
   if (WiFi.status() != WL_CONNECTED) {
     return false;
   }
+
+  send_host_discovery_request();
 
   // Start listening on broadcast port
   if (Udp.begin(bc_port) != 1) {
@@ -609,6 +640,7 @@ start_again:
       timeout = millis() + WIFI_CONNECT_TIMEOUT;
     }
   }
+  calculate_broadcast_ip();
   //mylog("WiFi Connected, [%02X:%02X:%02X:%02X:%02X:%02X]\n", macAddr[0], macAddr[1], macAddr[2], macAddr[3], macAddr[4], macAddr[5]);
 
 #ifdef SHOWINFO_WIFIDIAG
@@ -698,6 +730,20 @@ void mylog(const char *sFmt, ...)
   // mandatory tidy up
   va_end(args);
   return;
+}
+
+/*
+ * Calculate the network broadcast address from IP address and subnet mask
+ */
+void calculate_broadcast_ip() {
+  byte mask;
+  byte b_cast[4];
+  IPAddress ip = WiFi.localIP();
+  IPAddress subnet = WiFi.subnetMask();
+  for (int i = 0; i < 4; i++) {
+    mask = ~subnet[i];
+    wifi_broadcast_ip[i] = ip[i] | mask;
+  }  
 }
 
 void show_wifi_info() {
