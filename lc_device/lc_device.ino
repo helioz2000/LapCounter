@@ -378,6 +378,7 @@ void send_telemetry_keepalive() {
   int packet_length = make_telemetry_header(PACKET_TYPE_TELEMETRY);
   strcat(txPacket, "\n");
   send_telemetry_packet(strlen(txPacket));
+  //mylog("Telemetry sent -->>%s", txPacket);
 }
 
 /*
@@ -388,18 +389,18 @@ bool send_telemetry_packet(int packet_length) {
   if (!t_host_enable) return retVal;
   if (packet_length < 1) return retVal;
   if (!Udp.beginPacket(t_host_ip, t_port)) {
-    UI.println("Telemetry: Udp.beginPacket failed");
+    mylog("Telemetry: Udp.beginPacket failed");
     goto send_done;
   }
    
   digitalWrite(LED_BUILTIN, LED_ON);
   if ( Udp.write(txPacket, packet_length) != packet_length)  {
-    UI.println("Telemetry: Udp.write failed");
+    mylog("Telemetry: Udp.write failed");
     goto send_done;
   }
   
   if (!Udp.endPacket()) {
-    UI.println("Telemetry: Udp.endPacket failed");
+    mylog("Telemetry: Udp.endPacket failed");
   } else {
     //mylog("%d: Telemetry Packet %d sent\n", millis(), udp_sequence-1);
     retVal = true;
