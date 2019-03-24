@@ -470,21 +470,28 @@ send_done:
  * returns: true on success and false on fail
  */
 bool discover_telemetry_host(long timeout) {
+  bool retval = false;
+  int retry_count = 0;
+  long timeout_value;
+  int packetSize;
+  int bytesRead;
+
+retry_loop:
+  
   // exit if WiFi is not connected
   if (WiFi.status() != WL_CONNECTED) {
-    return false;
+    goto end_loop;
   }
 
   send_host_discovery_request();
 
   // Start listening on broadcast port
   if (Udp.begin(bc_port) != 1) {
-    return false;
+    goto end_loop;
   } 
   
-  long timeout_value = millis() + timeout;
-  int packetSize;
-  int bytesRead = 0;
+  timeout_value = millis() + timeout;
+  bytesRead = 0;
 
   // wait for broadcast packet from telemetry host
   while (millis() < timeout_value) {
@@ -496,14 +503,23 @@ bool discover_telemetry_host(long timeout) {
         Udp.flush();
         Udp.stop();
         setup_t_port_listening();
-        return true;
+        retval = true;
+        goto end_loop;
       }
     }
-    digitalWrite(LED_BUILTIN, bitRead(flash_byte, FLASH_1S));
+    digitalWrite(LED_BUILTIN, bitRead(flash_byte, FLASH_250));
     // Check for user input which indicates the user wants to change WiFi network
-    if (UI.available()) return false;
+    if (UI.available()) goto end_loop;
   }
-  return false;
+  Udp.stop();
+  // keep retrying until we find a telemetry host
+  retry_count++;
+  mylog("Telemetry host discover timeout, retry %d\n", retry_count);
+  goto retry_loop;
+
+end_loop:
+  digitalWrite(LED_BUILTIN, LED_OFF);
+  return retval;
 }
 
 /*
@@ -629,7 +645,7 @@ start_again:
   timeout = millis() + WIFI_CONNECT_TIMEOUT;
   while (WiFi.status() != WL_CONNECTED) {
     delay(250);             // do not remove, no delay will crash the ESP8266
-    digitalWrite(LED_BUILTIN, bitRead(flash_byte, FLASH_250));
+    digitalWrite(LED_BUILTIN, bitRead(flash_byte, FLASH_1S));
     if (millis() >= timeout) {
       mylog("\nWiFi timeout trying to connect to %s\n", WiFi.SSID().c_str());
       wifi_select_network();
@@ -640,6 +656,7 @@ start_again:
       timeout = millis() + WIFI_CONNECT_TIMEOUT;
     }
   }
+  digitalWrite(LED_BUILTIN, LED_OFF);
   calculate_broadcast_ip();
   //mylog("WiFi Connected, [%02X:%02X:%02X:%02X:%02X:%02X]\n", macAddr[0], macAddr[1], macAddr[2], macAddr[3], macAddr[4], macAddr[5]);
 
@@ -651,22 +668,20 @@ start_again:
   show_wifi_info();
   esp_info();
 
-  UI.println("Waiting for telemetry host broadcast");
-  //while (!t_host_found ) {   
-  //  UI.print(".");
-    if (discover_telemetry_host(T_HOST_DISCOVERY_TIMEOUT)) {
-      UI.println("Telemetry host found");
-      nextTX = millis() + TX_INTERVAL;
-    } else {
-      UI.println("Telemetry host timeout -> telemetry disabled.");
-    }
-    // allow user to interrupt and select different network
-    if (scan_user_input()) {
-      UI.println(" ");
-      wifi_select_network();
-      goto start_again;
-    }
-  //} 
+  mylog("Telemetry host discovery in progress ...\n");
+
+  if (discover_telemetry_host(T_HOST_DISCOVERY_TIMEOUT)) {
+    //mylog("Telemetry host found (%d.%d.%d.%d)\n", t_host_ip[0], t_host_ip[1], t_host_ip[2], t_host_ip[3]);
+    nextTX = millis() + TX_INTERVAL;
+  } else {
+    mylog("Failed to find telemetry host\n");
+  }
+  // allow user to interrupt and select different network
+  if (scan_user_input()) {
+    UI.println(" ");
+    wifi_select_network();
+    goto start_again;
+  }
 }
 
 
@@ -675,7 +690,7 @@ start_again:
 // ********************************************************************************
 
 /*
- * Scan for use input of +++ to enter WiFi config mode
+ * Scan for user input of +++ to enter WiFi config mode
  * returns true if the user has entered +++ otherwise false
  */
 bool scan_user_input() {
