@@ -1,4 +1,5 @@
 /*
+ * file: lc_transmitter.ino
  * 38kHz driver for IR LED's
  * 
  */
