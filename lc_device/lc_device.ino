@@ -2,25 +2,25 @@
  *  lc_device.ino
  *
  *  Hardware: WeMos D1 R1 (under ESP8266 boards)
- *  
+ *
  *  WiFi library doc: https://arduino-esp8266.readthedocs.io/en/latest/libraries.html#wifi-esp8266wifi-library
- *  
+ *
  *  Wiring:
  *  D3 - Lap count sensor, switches to ground.
- *  
+ *
  *  Functional description:
- *  
+ *
  *  When the lap count sensor input goes low a UDP packet is sent to the telemetry host
  *  with the time since the lapcount has occured. This packet will be re-transmitted
  *  until the host acknowledges the packet.
- *  
+ *
  *  Changing WiFi SSID and passphrase:
  *  At any time druing startup or operation the user can send "+++" to enter
  *  Network Discovery mode. After selection of a network the user is asked to enter
  *  the network passphrase.
- *  Once connected, the SSID and passphrase are stored in the module and used 
+ *  Once connected, the SSID and passphrase are stored in the module and used
  *  durign subsequent WiFi activities.
- *   
+ *
  *  Pins:
  *  D0 = 16   // not working
  *  D1 = 5
@@ -55,7 +55,7 @@ char wifi_hostname[12];               // storage for WiFi hostname (LCxxxxxx)
 IPAddress wifi_broadcast_ip;          // broadcast Wifi IP address (calculated)
 const unsigned long WIFI_CONNECT_TIMEOUT=15000;    // max connection time for WiFi timeout
 
-// server 
+// server
 String http_server_domain;
 String http_server_file;
 int http_server_port = 0;
@@ -77,7 +77,7 @@ const bool LED_OFF = true;
 const long TX_INTERVAL = 5000;        // telemetry TX
 long nextTX;
 
-IPAddress t_host_ip = (127,0,0,1);              // IP of telemetry host, set by host discovery 
+IPAddress t_host_ip = (127,0,0,1);              // IP of telemetry host, set by host discovery
 const char t_host_id[] = {'L', 'C', '1'};       // ID for telemetry host (used host discovery)
 const int T_HOST_ID_LEN = 3;                    // length of host id
 bool t_host_enable = false;                     // Telemetry is enabled (host has been found)
@@ -96,11 +96,11 @@ char lcPacket[16];                      // buffer for lap count packet
 char txPacket[256];                     // buffer for outgoing packets
 bool t_listening = false;               // true when listening for telemetry host UDP packets
 byte udp_sequence = 0;                  // sequence byte for UDP packets
-const byte PACKET_TYPE_KEEP_ALIVE = 0;  // packet types 
-const byte PACKET_TYPE_LAP_COUNT = 1;   // being sent 
+const byte PACKET_TYPE_KEEP_ALIVE = 0;  // packet types
+const byte PACKET_TYPE_LAP_COUNT = 1;   // being sent
 const byte PACKET_TYPE_TELEMETRY = 2;   // to the telemetry host
 
-volatile unsigned long lap_count_event_time = 0;  // set to curent millis reading on lap counter interrupt, reset to zero when processed 
+volatile unsigned long lap_count_event_time = 0;  // set to curent millis reading on lap counter interrupt, reset to zero when processed
 bool lap_count_signal_shadow = false;
 unsigned long lap_count_signal_block_time = 10000;     // ms for lap count sensor blocking (possible multiple signals)
 unsigned long lap_count_signal_block_timeout;
@@ -159,12 +159,12 @@ void setup() {
   sprintf(wifi_hostname, "LC%02X%02X%02X", macAddr[3], macAddr[4], macAddr[5]);
   mylog("Setting this hostname to %s", wifi_hostname);
   WiFi.hostname(wifi_hostname);
-  
+
   // We start by connecting to a WiFi network
   mylog("\n\n\nEnter +++ to activate WiFi config mode.\nConnecting to %s", WiFi.SSID().c_str());
-  
+
   WiFi.begin();
-  
+
   digitalWrite(LED_BUILTIN, LED_ON);
 
   // configure time interrupt
@@ -174,7 +174,7 @@ void setup() {
 
   // configure lap counter input interrupt
   // disabled as it picks up sporadic pulses collected by the IR sensor board.
-  //attachInterrupt(digitalPinToInterrupt(LAP_COUNT_SENSOR_PIN), onLapCountISR, FALLING); 
+  //attachInterrupt(digitalPinToInterrupt(LAP_COUNT_SENSOR_PIN), onLapCountISR, FALLING);
 }
 
 void loop() {
@@ -196,7 +196,7 @@ void loop() {
   }
 
   process_ir_signal();
-  
+
   // process lapcount event
   if (lap_count_event_time != 0) {
     process_lap_count();
@@ -222,13 +222,13 @@ void process_lap_count() {
     lap_count_signal_shadow = true;
     lap_count_signal_block_timeout = millis() + lap_count_signal_block_time;
     send_lapcount_udp();
-    send_lapcount_http(lap_count_event_time);     
+    send_lapcount_http(lap_count_event_time);
   } else {
     if(millis() >= lap_count_signal_block_timeout) {
       lap_count_event_time = 0;
       lap_count_signal_shadow = false;
     }
-  } 
+  }
 }
 
 /*
@@ -257,7 +257,7 @@ void process_ir_signal() {
         lap_count_event_time = ir_pulse_start;
         //mylog("Lap Count Sensor pulse length: %dms\n", ir_pulse_length);
       }
-    } 
+    }
   }
 
   // IR pulse detect start when input goes low
@@ -266,7 +266,7 @@ void process_ir_signal() {
     ir_pulse_active = true;
     ir_pulse_length = 0;
   }
- 
+
 }
 
 /*
@@ -275,7 +275,7 @@ void process_ir_signal() {
 void process_rx_packet() {
   mylog("Received %d bytes\n", rxPacketSize);
   Udp.read(rxPacket, rxPacketSize);
-  
+
   // show UDP packet contents
   for (int i = 0; i<rxPacketSize; i++) {
     mylog("[%0X] ", rxPacket[i]);
@@ -300,7 +300,7 @@ bool send_lapcount_http(unsigned long event_time) {
     server.stop();
     return false;
   }
-  
+
   //mylog("connected to %s\n", serverName);
   // construct data string
   // 1: our wifi hostname
@@ -308,6 +308,7 @@ bool send_lapcount_http(unsigned long event_time) {
   // 2: event age
   httpStr += "+";
   httpStr += String((millis() - event_time));
+  httpStr += "+3000";         // ToDo: measure and send actual battery voltage
 
   // send string to server encapsulated in HTTP GET request
   server.print(String("GET /") + http_server_file + httpStr + " HTTP/1.1\r\n" + "Host: " + http_server_domain + "\r\n" + "Connection: close\r\n" + "\r\n");
@@ -331,7 +332,7 @@ bool send_lapcount_http(unsigned long event_time) {
           //mylog("http server response: %d\n", response_status_code);
         }
       }
-      
+
       // look for reply LC:
       if ( (line[0] == 'L') && (line[1] == 'C') && (line[2] == ':') ) {
         //mylog("--->> %s", line.c_str());
@@ -339,7 +340,7 @@ bool send_lapcount_http(unsigned long event_time) {
         if (line.compareTo(String(wifi_hostname)) == 0) {
           //mylog("lap count http ACK received\n");
         } else {
-          mylog("lap count http error - received: <%s>, looking for: <%s>]\n", line.c_str(), wifi_hostname); 
+          mylog("lap count http error - received: <%s>, looking for: <%s>]\n", line.c_str(), wifi_hostname);
         }
       }
       //mylog("%s\n",line.c_str());
@@ -356,7 +357,7 @@ bool send_lapcount_udp() {
   LONGUNION_t elapsed_time;
 
   if (!t_host_enable) return false;
-  
+
   int packet_length = make_telemetry_header(PACKET_TYPE_LAP_COUNT);
   elapsed_time.l_value = millis() - lap_count_event_time;
   //lap_count_event_time -= 255;
@@ -392,20 +393,20 @@ bool send_telemetry_packet(int packet_length) {
     mylog("Telemetry: Udp.beginPacket failed");
     goto send_done;
   }
-   
+
   digitalWrite(LED_BUILTIN, LED_ON);
   if ( Udp.write(txPacket, packet_length) != packet_length)  {
     mylog("Telemetry: Udp.write failed");
     goto send_done;
   }
-  
+
   if (!Udp.endPacket()) {
     mylog("Telemetry: Udp.endPacket failed");
   } else {
     //mylog("%d: Telemetry Packet %d sent\n", millis(), udp_sequence-1);
     retVal = true;
   }
-  
+
 send_done:
   digitalWrite(LED_BUILTIN, LED_OFF);
   return retVal;
@@ -445,12 +446,12 @@ bool send_host_discovery_request() {
     UI.println("Telemetry1: Udp.beginPacket failed");
     goto send_done;
   }
-   
+
   digitalWrite(LED_BUILTIN, LED_ON);
 
   sprintf(txPacket, "%s\n", wifi_hostname);
   packet_length = strlen(txPacket);
-  
+
   if ( Udp.write(txPacket, packet_length) != packet_length)  {
     UI.println("Telemetry1: Udp.write failed");
   }
@@ -459,7 +460,7 @@ send_done:
 
   if (!Udp.endPacket()) {
     UI.println("Telemetry1: Udp.endPacket failed");
-  } 
+  }
 
   digitalWrite(LED_BUILTIN, LED_OFF);
 
@@ -478,7 +479,7 @@ bool discover_telemetry_host(long timeout) {
   int bytesRead;
 
 retry_loop:
-  
+
   // exit if WiFi is not connected
   if (WiFi.status() != WL_CONNECTED) {
     goto end_loop;
@@ -489,8 +490,8 @@ retry_loop:
   // Start listening on broadcast port
   if (Udp.begin(bc_port) != 1) {
     goto end_loop;
-  } 
-  
+  }
+
   timeout_value = millis() + timeout;
   bytesRead = 0;
 
@@ -499,7 +500,7 @@ retry_loop:
     packetSize = Udp.parsePacket();
     if(packetSize) {
        // read the packet into packetBufffer
-      bytesRead = Udp.read(rxPacket,UDP_RX_BUFFER_SIZE);    
+      bytesRead = Udp.read(rxPacket,UDP_RX_BUFFER_SIZE);
       if (validateTelemetryHost(bytesRead)) {
         Udp.flush();
         Udp.stop();
@@ -567,7 +568,7 @@ bool validateTelemetryHost(int bufsize) {
         mylog("Telemetry host: %s\n", t_host_name );
         break;
       case 4:   // HTTP server domain ("support.rossw.net")
-        http_server_domain = String(token);       
+        http_server_domain = String(token);
         break;
       case 5:   // HTTP server port (80)
         http_server_port=atoi(token);
@@ -583,7 +584,7 @@ bool validateTelemetryHost(int bufsize) {
     }
     token = strtok(0, "\t");
   }
-  
+
   return true;
 }
 
@@ -595,10 +596,10 @@ bool validateTelemetryHost(int bufsize) {
 /*
  * Allow user to change WiFi SSID and password
  */
-void wifi_select_network() { 
+void wifi_select_network() {
   byte numSsid;
   int thisNet;
-  
+
 startAgain:
   UI.println("\n** Scanning Nearby Networks **");
   // scan for nearby networks:
@@ -629,7 +630,7 @@ startAgain:
   // save ssid and passphrase
   strcpy(wifi_ssid, WiFi.SSID(thisNet).c_str());
   strcpy(wifi_passphrase, inputBuffer);
-  
+
   // connect usign new credentials
   WiFi.disconnect(true);                  // this will clear the previous credentials
   WiFi.begin(wifi_ssid, wifi_passphrase);
@@ -638,11 +639,11 @@ startAgain:
 /*
  * Wait for WiFi to connect
  * If not connected within timeout period the user will be prompted to select a new WiFi network
- * Once the WiFi is conneced we wait for a broadcast packet from the telemetry host 
+ * Once the WiFi is conneced we wait for a broadcast packet from the telemetry host
  */
 void wait_for_wifi() {
   long timeout;
-start_again:  
+start_again:
   timeout = millis() + WIFI_CONNECT_TIMEOUT;
   while (WiFi.status() != WL_CONNECTED) {
     delay(250);             // do not remove, no delay will crash the ESP8266
@@ -711,7 +712,7 @@ bool scan_user_input() {
 }
 
 /*
- * read one line of user input into buffer 
+ * read one line of user input into buffer
  * returns the number of characters read into the input buffer
  */
 int read_line() {
@@ -725,21 +726,21 @@ int read_line() {
       }
       if ((c == '\n') || (cnt == sizeof(inputBuffer)-1)) {
         inputBuffer[cnt] = '\0';
-        return cnt;    
+        return cnt;
       }
     }
   }
 }
 
 
-/* 
+/*
  *  print debug output on console interface
  */
 void mylog(const char *sFmt, ...)
 {
   char acTmp[128];       // place holder for sprintf output
   va_list args;          // args variable to hold the list of parameters
-  va_start(args, sFmt);  // mandatory call to initilase args 
+  va_start(args, sFmt);  // mandatory call to initilase args
 
   vsprintf(acTmp, sFmt, args);
   UI.print(acTmp);
@@ -759,7 +760,7 @@ void calculate_broadcast_ip() {
   for (int i = 0; i < 4; i++) {
     mask = ~subnet[i];
     wifi_broadcast_ip[i] = ip[i] | mask;
-  }  
+  }
 }
 
 void show_wifi_info() {
