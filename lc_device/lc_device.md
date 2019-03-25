@@ -4,7 +4,7 @@ This device is based on the ESP8266 based WeMos D1 module.
 The device is mounted on the vehicle which passes in view of the infrared transmitter.
 It retrieves it's configuration details from a telemetry host residing on the same subnet.
 
-<img align="left" src="https://github.com/helioz2000/LapCounter/lc_device/lc_device.jpg">
+<img align="left" src="https://github.com/helioz2000/LapCounter/tree/master/lc_device/lc_device.jpg">
 
 ##### User Interaction
 The user can interact with lc_device by connecting a terminal program to the
