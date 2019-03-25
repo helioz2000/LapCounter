@@ -4,6 +4,8 @@ This device is based on the ESP8266 based WeMos D1 module.
 The device is mounted on the vehicle which passes in view of the infrared transmitter.
 It retrieves it's configuration details from a telemetry host residing on the same subnet.
 
+[logo]: https://github.com/helioz2000/LapCounter/blob/master/lc_device/lc_device.jpg "lap counter device"
+
 ##### User Interaction
 The user can interact with lc_device by connecting a terminal program to the
 device USB interface. The Arduino IDE Serial Monitor is perfectly suited for
@@ -19,6 +21,7 @@ To change/replace an existing [already connected] WiFi connection send
 to trigger scan for SSID's followed by pass phrase entry. 
 
 After successful connection to the WiFi network the device will send a UDP broadcast config request to the local subnet port 2000. The telemetry server receives the request and responds with a subnet broadcast of the configuration.
+
 The response contains the following details:
 
 - `http server domain`, e.g. example.com.au
@@ -27,9 +30,9 @@ The response contains the following details:
 - `telemetry server port number` e.g. 2006
 - `telemetry server identifier` e.g. LC1
 
-If the configuration relpy is not received after a timeout period the
+If the configuration response is not received after a timeout period the
 lc_device will send another config request and stay in this loop until
-a configuration has been received.
+a configuration has been received (there is no point in proceeding).
 
 ### Device Functionality
 
@@ -41,12 +44,8 @@ During startup the blue LED:
 - flashes briefly during telemetry transmission
 
 #### Lapcount
-The device is fitted with IR receiver. The receiver will trigger a device to
-transmit a lapcount event to telemetry and http servers.
-The server will reply with a confirmation packet to confirm the lap count
-has reached it's destination.
-Lapcount packets are sent with age information [in ms] to facilitate
-time correction on the server side.
+The device is fitted with IR receiver. The receiver will trigger a device to transmit a lapcount event to telemetry and http servers.
+The server will reply with a confirmation packet to confirm the lap count has reached it's destination. Lapcount packets are sent with age information [in ms] to facilitate time correction on the server side.
 
 ##### Lapcount http request
 The request to the http service is GET HTTP/1.1
