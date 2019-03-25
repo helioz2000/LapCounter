@@ -10,4 +10,4 @@ The power supply is nominally 12V DC but can be anything from 9-14V DC.
 
 ![Lap Counter Device](/lc_transmitter/lc_tester.jpg)
 
-The tester is powered by 3 x AA batteries. The buzzer will sound when an infrared signal pulsed at 38kHz is encountered.
+The tester is powered by 3 x AA batteries. The buzzer will sound while an infrared signal pulsed at 38kHz is detected.
