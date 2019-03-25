@@ -34,6 +34,9 @@
  */
 
 const byte LAP_COUNT_SENSOR_PIN = 0;
+const float ANALOG_SCALE = 3500;      // mV - Voltage scaling for Analog Input
+// disabled so we can read raw from battery voltage from A0
+//ADC_MODE(ADC_VCC);    // switch analog input to read VCC
 
 #include <ESP8266WiFi.h>
 #include <WifiUdp.h>
@@ -46,8 +49,6 @@ WiFiClient server;
 //#define SHOWINFO_WIFIDIAG
 //#define SHOWINFO_WIFICONNECTION
 //#define SHOWINFO_ESP
-
-ADC_MODE(ADC_VCC);    // switch analog input to read VCC
 
 char wifi_ssid[32];                   // storage for WiFi SSID
 char wifi_passphrase[32];;            // storage for WiFi passphrase
@@ -84,7 +85,7 @@ bool t_host_enable = false;                     // Telemetry is enabled (host ha
 const int telemetry_default_port = 2006;        // May be overridden by telemetry host discovery
 unsigned int t_port = telemetry_default_port;   // Port for data exchange
 const unsigned int bc_port = 2000;              // Broadcast port for telemetry host discovery
-const long T_HOST_DISCOVERY_TIMEOUT = 15000;    // Timeout for telemetry host discovery
+const long T_HOST_DISCOVERY_TIMEOUT = 5000;    // Timeout for telemetry host discovery
 
 const int T_HOST_NAME_MAX_LEN = 30;
 char t_host_name[T_HOST_NAME_MAX_LEN];    // storage for host name
@@ -218,7 +219,7 @@ void loop() {
  */
 void process_lap_count() {
   if (!lap_count_signal_shadow) {
-    mylog("Lap Count Sensor Interrupt <%d>\n", digitalRead(LAP_COUNT_SENSOR_PIN));
+    mylog("Lap Count Sensor signal detected <%d>\n", digitalRead(LAP_COUNT_SENSOR_PIN));
     lap_count_signal_shadow = true;
     lap_count_signal_block_timeout = millis() + lap_count_signal_block_time;
     send_lapcount_udp();
@@ -304,12 +305,13 @@ bool send_lapcount_http(unsigned long event_time) {
   //mylog("connected to %s\n", serverName);
   // construct data string
   // 1: our wifi hostname
-  String httpStr = String(wifi_hostname);
+  String httpStr = String("deviceID=");
+  httpStr += wifi_hostname;
   // 2: event age
-  httpStr += "+";
+  httpStr += "&eventAge=";
   httpStr += String((millis() - event_time));
-  httpStr += "+3000";         // ToDo: measure and send actual battery voltage
-
+  httpStr += "&batVoltage=";         // ToDo: measure and send actual battery voltage
+  httpStr += String(read_battery_voltage());
   // send string to server encapsulated in HTTP GET request
   server.print(String("GET /") + http_server_file + httpStr + " HTTP/1.1\r\n" + "Host: " + http_server_domain + "\r\n" + "Connection: close\r\n" + "\r\n");
   //mylog("[Response:]\n");
@@ -317,6 +319,7 @@ bool send_lapcount_http(unsigned long event_time) {
     if (server.available()) {
       String line = server.readStringUntil('\n');
       line_no++;
+      //mylog("%d: %s\n",line_no,line.c_str());
       // check first line for reply success
       if (line_no == 1) {
         strncpy(line_str,line.c_str(), 31);
@@ -335,15 +338,15 @@ bool send_lapcount_http(unsigned long event_time) {
 
       // look for reply LC:
       if ( (line[0] == 'L') && (line[1] == 'C') && (line[2] == ':') ) {
-        //mylog("--->> %s", line.c_str());
+        // mylog("%d: %s\n",line_no,line.c_str());
+        // remove colon 
         line.remove(2,1);
-        if (line.compareTo(String(wifi_hostname)) == 0) {
-          //mylog("lap count http ACK received\n");
+        if (line.substring(0,8) == wifi_hostname) {
+          mylog("lap count http ACK received\n");
         } else {
-          mylog("lap count http error - received: <%s>, looking for: <%s>]\n", line.c_str(), wifi_hostname);
+          mylog("lap count http error - received: <%s>, looking for: <%s>]\n", line.substring(0,8).c_str(), wifi_hostname);
         }
-      }
-      //mylog("%s\n",line.c_str());
+      }     
     }
   }
   server.stop();
@@ -690,6 +693,19 @@ start_again:
 // ********************************************************************************
 //    Utility functions
 // ********************************************************************************
+
+/*
+ * returns battery voltage in mV
+ * Wemos D1 has 220k/100k voltage divider on A0
+ * An external 33k resistor added externally on the high side bring the Voltage divider to
+ * 253k/100k = 3.53V to 1V = 1024 bits on analog in
+ * 
+ */
+int read_battery_voltage() {
+  int rawValue = analogRead(A0);
+  float voltage = rawValue * (ANALOG_SCALE / 1023.0);   // read mV
+  return (int) voltage;
+}
 
 /*
  * Scan for user input of +++ to enter WiFi config mode
