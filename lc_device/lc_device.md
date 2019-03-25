@@ -49,7 +49,7 @@ The server will reply with a confirmation packet to confirm the lap count has re
 
 ##### Lapcount http request
 The request to the http service is GET HTTP/1.1
-> server.example.com/lapcount?deviceID+eventAge+batVoltage
+> server.example.com/lapcount?deviceID=LC112233&eventAge=1234&batVoltage=3100
 
 - deviceID = `LC112233` (112233 are the last 3 octets of the Wemos D1 MAC address)
 - eventAge = `1234` (number of milliseconds since the lap count event occured)
