@@ -1,6 +1,6 @@
 # Lap Counter IR transmitter
 
-The infra red LED's on this transmitter are pulsed at 38kHz.
+The infrared LED's on this transmitter are pulsed at 38kHz.
 
 ![Lap Counter Device](/lc_transmitter/lc_transmitter.jpg)
 
