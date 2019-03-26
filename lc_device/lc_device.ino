@@ -56,10 +56,10 @@ char wifi_hostname[12];               // storage for WiFi hostname (LCxxxxxx)
 IPAddress wifi_broadcast_ip;          // broadcast Wifi IP address (calculated)
 const unsigned long WIFI_CONNECT_TIMEOUT=15000;    // max connection time for WiFi timeout
 
-// server
-String http_server_domain;
-String http_server_file;
-int http_server_port = 0;
+// server - default values are used when there is no telemetry server
+String http_server_domain = "galston500.com";
+String http_server_file = "lapcount.php?";
+int http_server_port = 80;
 bool http_server_enable = false;
 
 // Infrared pulse detection parameters
@@ -85,7 +85,8 @@ bool t_host_enable = false;                     // Telemetry is enabled (host ha
 const int telemetry_default_port = 2006;        // May be overridden by telemetry host discovery
 unsigned int t_port = telemetry_default_port;   // Port for data exchange
 const unsigned int bc_port = 2000;              // Broadcast port for telemetry host discovery
-const long T_HOST_DISCOVERY_TIMEOUT = 5000;    // Timeout for telemetry host discovery
+const long T_HOST_DISCOVERY_TIMEOUT = 5000;     // Timeout for telemetry host discovery
+const int T_HOST_DISCOVERY_RETRY = 4;           // Retries for telemtry host discovery
 
 const int T_HOST_NAME_MAX_LEN = 30;
 char t_host_name[T_HOST_NAME_MAX_LEN];    // storage for host name
@@ -158,11 +159,11 @@ void setup() {
 
   // set hostname
   sprintf(wifi_hostname, "LC%02X%02X%02X", macAddr[3], macAddr[4], macAddr[5]);
-  mylog("Setting this hostname to %s", wifi_hostname);
+  mylog("\nSetting this hostname to %s\n", wifi_hostname);
   WiFi.hostname(wifi_hostname);
 
   // We start by connecting to a WiFi network
-  mylog("\n\n\nEnter +++ to activate WiFi config mode.\nConnecting to %s", WiFi.SSID().c_str());
+  mylog("\nEnter ""+++"" to activate WiFi config mode.\nEnter ""l"" to trigger lapcount\n\nConnecting to %s", WiFi.SSID().c_str());
 
   WiFi.begin();
 
@@ -293,9 +294,10 @@ bool send_lapcount_http(unsigned long event_time) {
   char *token;
   char line_str[32];
   int response_status_code;
+  int battery_voltage = read_battery_voltage();
   if (!http_server_enable) return false;
   unsigned long http_start_time = millis();
-  mylog("Sending lapcount http request .... \n");
+  mylog("Sending lapcount http request (battery %dmV) .... \n", battery_voltage);
   if (! server.connect(http_server_domain.c_str(), http_server_port)) {
     mylog("lap count http error: connection to <%s:%d> failed\n", http_server_domain.c_str(), http_server_port);
     server.stop();
@@ -310,9 +312,10 @@ bool send_lapcount_http(unsigned long event_time) {
   // 2: event age
   httpStr += "&eventAge=";
   httpStr += String((millis() - event_time));
-  httpStr += "&batVoltage=";         // ToDo: measure and send actual battery voltage
-  httpStr += String(read_battery_voltage());
+  httpStr += "&batVoltage=";
+  httpStr += String(battery_voltage);
   // send string to server encapsulated in HTTP GET request
+  //mylog("Server request: %s%s\n", http_server_file.c_str(), httpStr.c_str() );
   server.print(String("GET /") + http_server_file + httpStr + " HTTP/1.1\r\n" + "Host: " + http_server_domain + "\r\n" + "Connection: close\r\n" + "\r\n");
   //mylog("[Response:]\n");
   while (server.connected() || server.available()) {
@@ -330,7 +333,7 @@ bool send_lapcount_http(unsigned long event_time) {
         // check response status is OK
         if ( (response_status_code < 200) || (response_status_code > 299) ) {
           mylog("error response received from server: <%s>\n", line.c_str());
-          break;
+          //break;
         } else {
           //mylog("http server response: %d\n", response_status_code);
         }
@@ -481,25 +484,25 @@ bool discover_telemetry_host(long timeout) {
   int packetSize;
   int bytesRead;
 
-retry_loop:
+  while(retry_count < T_HOST_DISCOVERY_RETRY) {
 
   // exit if WiFi is not connected
-  if (WiFi.status() != WL_CONNECTED) {
+    if (WiFi.status() != WL_CONNECTED) {
     goto end_loop;
   }
 
-  send_host_discovery_request();
+    send_host_discovery_request();
 
   // Start listening on broadcast port
-  if (Udp.begin(bc_port) != 1) {
+    if (Udp.begin(bc_port) != 1) {
     goto end_loop;
   }
 
-  timeout_value = millis() + timeout;
-  bytesRead = 0;
+    timeout_value = millis() + timeout;
+    bytesRead = 0;
 
-  // wait for broadcast packet from telemetry host
-  while (millis() < timeout_value) {
+    // wait for broadcast packet from telemetry host
+    while (millis() < timeout_value) {
     packetSize = Udp.parsePacket();
     if(packetSize) {
        // read the packet into packetBufffer
@@ -516,11 +519,11 @@ retry_loop:
     // Check for user input which indicates the user wants to change WiFi network
     if (UI.available()) goto end_loop;
   }
-  Udp.stop();
-  // keep retrying until we find a telemetry host
-  retry_count++;
-  mylog("Telemetry host discover timeout, retry %d\n", retry_count);
-  goto retry_loop;
+    Udp.stop();
+    // keep retrying until we find a telemetry host
+    retry_count++;
+    mylog("Telemetry host discover timeout, retry %d\n", retry_count);
+  }
 
 end_loop:
   digitalWrite(LED_BUILTIN, LED_OFF);
@@ -552,6 +555,8 @@ bool validateTelemetryHost(int bufsize) {
   int tokencount = 0;
   unsigned int port;
   while (token != 0) {
+    // remove trailing CR
+    if (token[strlen(token)-1] < 30) token[strlen(token)-1] = 0;
     tokencount++;
     switch(tokencount) {
       case 1:   // Host Identifier (e.g. "LC1")
@@ -680,6 +685,8 @@ start_again:
     nextTX = millis() + TX_INTERVAL;
   } else {
     mylog("Failed to find telemetry host\n");
+    mylog("using default values [%s] [%s]\n", http_server_domain.c_str(), http_server_file.c_str());
+    http_server_enable = true;
   }
   // allow user to interrupt and select different network
   if (scan_user_input()) {
@@ -712,19 +719,37 @@ int read_battery_voltage() {
  * returns true if the user has entered +++ otherwise false
  */
 bool scan_user_input() {
+  unsigned long event_time;
+  int line_len, retval = false;
   if (UI.available()) {
-    if (read_line() == 3) {
+
+    line_len = read_line();
+    
+    // look for +++
+    if (line_len == 3) {
       for (int i=0; i<3; i++) {
-        if (inputBuffer[i] != '+') return false;
+        if (inputBuffer[i] != '+') return retval;
       }
-      // drain the input buffer
-      while (UI.available()) {
-        UI.read();
-      }
-      return true;
+      retval = true;
+      goto done;     
+    }
+    
+    // look for 'l'
+    if ( (line_len == 1) && (inputBuffer[0] == 'l') ){
+      event_time = millis();
+      mylog("Simulated Lap event triggered\n");
+      send_lapcount_udp();
+      send_lapcount_http(event_time);
+      goto done;
     }
   }
-  return false;
+  return retval;
+
+done:
+  while (UI.available()) {
+    UI.read();
+  }
+  return retval;
 }
 
 /*
