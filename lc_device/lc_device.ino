@@ -33,10 +33,13 @@
  *  D8 = 15
  */
 
+
 const byte LAP_COUNT_SENSOR_PIN = 0;
 const float ANALOG_SCALE = 3500;      // mV - Voltage scaling for Analog Input
 // disabled so we can read raw from battery voltage from A0
 //ADC_MODE(ADC_VCC);    // switch analog input to read VCC
+const byte RED_LED_PIN = 13; 
+const byte GREEN_LED_PIN = 12;
 
 #include <ESP8266WiFi.h>
 #include <WifiUdp.h>
@@ -154,6 +157,10 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(LAP_COUNT_SENSOR_PIN, INPUT_PULLUP);
 
+  // LED test
+  pinMode(RED_LED_PIN, OUTPUT);
+  pinMode(GREEN_LED_PIN, OUTPUT);
+
   // get MAC address to be used as ID
   WiFi.macAddress(macAddr);
 
@@ -168,6 +175,9 @@ void setup() {
   WiFi.begin();
 
   digitalWrite(LED_BUILTIN, LED_ON);
+
+  digitalWrite(RED_LED_PIN, LED_ON);
+  digitalWrite(GREEN_LED_PIN, LED_ON);
 
   // configure time interrupt
   timer1_attachInterrupt(onTimerISR);
