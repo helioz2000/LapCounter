@@ -21,6 +21,13 @@
  *  Once connected, the SSID and passphrase are stored in the module and used
  *  durign subsequent WiFi activities.
  *
+ *  LED indicator:
+ *  On startup all LED's flash for 2s
+ *  Red On:       Wifi not connected
+ *  Red slow flash: attempting to connect Wifi
+ *  Red fast flash: waiting for Telemetry host
+ *  Green flash: transmission of packet
+ *
  *  Pins:
  *  D0 = 16   // not working
  *  D1 = 5
@@ -28,18 +35,20 @@
  *  D3 = 0
  *  D4 = 2 (Blue LED_BUILTIN)
  *  D5 = 14
- *  D6 = 12
- *  D7 = 13
+ *  D6 = 12 (Green LED)
+ *  D7 = 13 (Red LED)
  *  D8 = 15
  */
 
-
 const byte LAP_COUNT_SENSOR_PIN = 0;
+#define RED_LED_PIN 13 
+#define GREEN_LED_PIN 12
+const byte OK_LED_PIN = GREEN_LED_PIN;
+const byte FAULT_LED_PIN = RED_LED_PIN;
+
 const float ANALOG_SCALE = 3500;      // mV - Voltage scaling for Analog Input
 // disabled so we can read raw from battery voltage from A0
 //ADC_MODE(ADC_VCC);    // switch analog input to read VCC
-const byte RED_LED_PIN = 13; 
-const byte GREEN_LED_PIN = 12;
 
 #include <ESP8266WiFi.h>
 #include <WifiUdp.h>
@@ -81,6 +90,8 @@ const bool LED_OFF = true;
 const long TX_INTERVAL = 5000;        // telemetry TX
 long nextTX;
 
+unsigned long ok_led_off_time = 0;              // OK LED indication
+
 IPAddress t_host_ip = (127,0,0,1);              // IP of telemetry host, set by host discovery
 const char t_host_id[] = {'L', 'C', '1'};       // ID for telemetry host (used host discovery)
 const int T_HOST_ID_LEN = 3;                    // length of host id
@@ -93,6 +104,7 @@ const int T_HOST_DISCOVERY_RETRY = 4;           // Retries for telemtry host dis
 
 const int T_HOST_NAME_MAX_LEN = 30;
 char t_host_name[T_HOST_NAME_MAX_LEN];    // storage for host name
+unsigned long t_packet_led_time = 100;  // min time for LED on telemetry packet 
 
 int rxPacketSize;                       // bytes in received UDP packet
 const int UDP_RX_BUFFER_SIZE = 256;
@@ -110,6 +122,7 @@ bool lap_count_signal_shadow = false;
 unsigned long lap_count_signal_block_time = 10000;     // ms for lap count sensor blocking (possible multiple signals)
 unsigned long lap_count_signal_block_timeout;
 //long lap_count_signal_time;               // time when lapcount event occured
+unsigned long lap_count_led_time = 1000;  // min time for LED indication on lap count
 
 uint8_t macAddr[6];                       // MAC address of this device
 
@@ -154,12 +167,11 @@ void setup() {
   UI.begin(9600);
   delay(10);
 
-  pinMode(LED_BUILTIN, OUTPUT);
+  // Configure I/O
   pinMode(LAP_COUNT_SENSOR_PIN, INPUT_PULLUP);
-
-  // LED test
-  pinMode(RED_LED_PIN, OUTPUT);
-  pinMode(GREEN_LED_PIN, OUTPUT);
+  pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(OK_LED_PIN, OUTPUT);
+  pinMode(FAULT_LED_PIN, OUTPUT);
 
   // get MAC address to be used as ID
   WiFi.macAddress(macAddr);
@@ -172,12 +184,11 @@ void setup() {
   // We start by connecting to a WiFi network
   mylog("\nEnter ""+++"" to activate WiFi config mode.\nEnter ""l"" to trigger lapcount\n\nConnecting to %s", WiFi.SSID().c_str());
 
+  led_test();
+  digitalWrite(FAULT_LED_PIN, LED_ON);
   WiFi.begin();
 
-  digitalWrite(LED_BUILTIN, LED_ON);
-
-  digitalWrite(RED_LED_PIN, LED_ON);
-  digitalWrite(GREEN_LED_PIN, LED_ON);
+  // digitalWrite(OK_LED_PIN, LED_ON);
 
   // configure time interrupt
   timer1_attachInterrupt(onTimerISR);
@@ -214,6 +225,14 @@ void loop() {
     process_lap_count();
   }
 
+  // OK Led handling
+  if (ok_led_off_time > 0) {
+    if (millis() > ok_led_off_time) {
+      digitalWrite(OK_LED_PIN, LED_OFF);
+      ok_led_off_time = 0;
+    }
+  }
+  
   // receive UDP packets from host
   if (t_listening) {
     rxPacketSize = Udp.parsePacket();
@@ -233,8 +252,10 @@ void process_lap_count() {
     mylog("Lap Count Sensor signal detected <%d>\n", digitalRead(LAP_COUNT_SENSOR_PIN));
     lap_count_signal_shadow = true;
     lap_count_signal_block_timeout = millis() + lap_count_signal_block_time;
+    digitalWrite(OK_LED_PIN, LED_ON);
     send_lapcount_udp();
     send_lapcount_http(lap_count_event_time);
+    ok_led_off_time = millis() + lap_count_led_time;
   } else {
     if(millis() >= lap_count_signal_block_timeout) {
       lap_count_event_time = 0;
@@ -393,9 +414,11 @@ bool send_lapcount_udp() {
  */
 void send_telemetry_keepalive() {
   int packet_length = make_telemetry_header(PACKET_TYPE_TELEMETRY);
+  digitalWrite(OK_LED_PIN, LED_ON);
   strcat(txPacket, "\n");
   send_telemetry_packet(strlen(txPacket));
   //mylog("Telemetry sent -->>%s", txPacket);
+  ok_led_off_time = millis() + t_packet_led_time;
 }
 
 /*
@@ -410,7 +433,7 @@ bool send_telemetry_packet(int packet_length) {
     goto send_done;
   }
 
-  digitalWrite(LED_BUILTIN, LED_ON);
+  digitalWrite(OK_LED_PIN, LED_ON);
   if ( Udp.write(txPacket, packet_length) != packet_length)  {
     mylog("Telemetry: Udp.write failed");
     goto send_done;
@@ -424,7 +447,7 @@ bool send_telemetry_packet(int packet_length) {
   }
 
 send_done:
-  digitalWrite(LED_BUILTIN, LED_OFF);
+  //digitalWrite(OK_LED_PIN, LED_OFF);
   return retVal;
 }
 
@@ -463,7 +486,7 @@ bool send_host_discovery_request() {
     goto send_done;
   }
 
-  digitalWrite(LED_BUILTIN, LED_ON);
+  digitalWrite(FAULT_LED_PIN, LED_ON);
 
   sprintf(txPacket, "%s\n", wifi_hostname);
   packet_length = strlen(txPacket);
@@ -478,7 +501,7 @@ send_done:
     UI.println("Telemetry1: Udp.endPacket failed");
   }
 
-  digitalWrite(LED_BUILTIN, LED_OFF);
+  digitalWrite(FAULT_LED_PIN, LED_OFF);
 
 }
 
@@ -525,7 +548,7 @@ bool discover_telemetry_host(long timeout) {
         goto end_loop;
       }
     }
-    digitalWrite(LED_BUILTIN, bitRead(flash_byte, FLASH_250));
+    digitalWrite(FAULT_LED_PIN, bitRead(flash_byte, FLASH_250));
     // Check for user input which indicates the user wants to change WiFi network
     if (UI.available()) goto end_loop;
   }
@@ -536,7 +559,7 @@ bool discover_telemetry_host(long timeout) {
   }
 
 end_loop:
-  digitalWrite(LED_BUILTIN, LED_OFF);
+  digitalWrite(FAULT_LED_PIN, LED_OFF);
   return retval;
 }
 
@@ -613,12 +636,15 @@ bool validateTelemetryHost(int bufsize) {
 
 /*
  * Allow user to change WiFi SSID and password
+ * Fault LED is on during section process
  */
 void wifi_select_network() {
   byte numSsid;
   int thisNet;
 
 startAgain:
+  digitalWrite(FAULT_LED_PIN, LED_ON);
+  
   UI.println("\n** Scanning Nearby Networks **");
   // scan for nearby networks:
   numSsid = WiFi.scanNetworks();
@@ -639,6 +665,7 @@ startAgain:
     mylog("Error - Invalid selection\n");
     goto startAgain;
   }
+  WiFi.disconnect(true);                  // this will clear the previous credentials
   mylog("Please enter pass phrase for %s : ", WiFi.SSID(thisNet).c_str() );
   if (read_line() < 0) {
     mylog("Error - A valid passphrase must be entered\n");
@@ -649,9 +676,9 @@ startAgain:
   strcpy(wifi_ssid, WiFi.SSID(thisNet).c_str());
   strcpy(wifi_passphrase, inputBuffer);
 
-  // connect usign new credentials
-  WiFi.disconnect(true);                  // this will clear the previous credentials
+  // connect using new credentials
   WiFi.begin(wifi_ssid, wifi_passphrase);
+  digitalWrite(FAULT_LED_PIN, LED_OFF);
 }
 
 /*
@@ -665,8 +692,9 @@ start_again:
   timeout = millis() + WIFI_CONNECT_TIMEOUT;
   while (WiFi.status() != WL_CONNECTED) {
     delay(250);             // do not remove, no delay will crash the ESP8266
-    digitalWrite(LED_BUILTIN, bitRead(flash_byte, FLASH_1S));
+    digitalWrite(FAULT_LED_PIN, bitRead(flash_byte, FLASH_1S));
     if (millis() >= timeout) {
+      digitalWrite(FAULT_LED_PIN, LED_ON);
       mylog("\nWiFi timeout trying to connect to %s\n", WiFi.SSID().c_str());
       wifi_select_network();
       timeout = millis() + WIFI_CONNECT_TIMEOUT;
@@ -676,7 +704,7 @@ start_again:
       timeout = millis() + WIFI_CONNECT_TIMEOUT;
     }
   }
-  digitalWrite(LED_BUILTIN, LED_OFF);
+  digitalWrite(FAULT_LED_PIN, LED_OFF);
   calculate_broadcast_ip();
   //mylog("WiFi Connected, [%02X:%02X:%02X:%02X:%02X:%02X]\n", macAddr[0], macAddr[1], macAddr[2], macAddr[3], macAddr[4], macAddr[5]);
 
@@ -710,6 +738,23 @@ start_again:
 // ********************************************************************************
 //    Utility functions
 // ********************************************************************************
+
+/*
+ * LED test 
+ * flashes LED to confirm operation
+ */
+void led_test() {
+  bool led_state = LED_ON;
+  digitalWrite(LED_BUILTIN, LED_ON);
+  for (int i=0; i<10; i++) {
+    digitalWrite(LED_BUILTIN, led_state);
+    digitalWrite(OK_LED_PIN, led_state);
+    digitalWrite(FAULT_LED_PIN, !led_state);
+    led_state = !led_state;
+    delay(200);
+  }
+  digitalWrite(LED_BUILTIN, LED_OFF);
+}
 
 /*
  * returns battery voltage in mV
