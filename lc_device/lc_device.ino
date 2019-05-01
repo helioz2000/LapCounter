@@ -67,6 +67,7 @@ char wifi_passphrase[32];;            // storage for WiFi passphrase
 char wifi_hostname[12];               // storage for WiFi hostname (LCxxxxxx)
 IPAddress wifi_broadcast_ip;          // broadcast Wifi IP address (calculated)
 const unsigned long WIFI_CONNECT_TIMEOUT=15000;    // max connection time for WiFi timeout
+bool wifi_status = false;             // WiFi connection status indicator
 
 // server - default values are used when there is no telemetry server
 String http_server_domain = "galston500.com";
@@ -160,7 +161,7 @@ void ICACHE_RAM_ATTR onLapCountISR() {
 }
 
 // ********************************************************************************
-//    Setup and Loop functions
+//    Setup 
 // ********************************************************************************
 
 void setup() {
@@ -198,24 +199,36 @@ void setup() {
   // configure lap counter input interrupt
   // disabled as it picks up sporadic pulses collected by the IR sensor board.
   //attachInterrupt(digitalPinToInterrupt(LAP_COUNT_SENSOR_PIN), onLapCountISR, FALLING);
+  
+  // establish WiFi 
+  //if (WiFi.status() != WL_CONNECTED) {
+    establish_wifi();
+  //}
+  mylog("\nSetup finished - starting loop\n");
 }
 
+// ********************************************************************************
+// Main Loop
+// the main loop is not entered until WiFi connection has been established
+// ********************************************************************************
+
 void loop() {
-  // establish WiFi if not connected
-  if (WiFi.status() != WL_CONNECTED) {
-    wait_for_wifi();
+  // dropped WiFi connection
+  if ((WiFi.status() != WL_CONNECTED) || !wifi_status) {
+    process_lost_wifi();
   }
 
   // check for user input
   if (scan_user_input()) {
     wifi_select_network();
-    wait_for_wifi();
+    establish_wifi();
   }
 
  // send telemetry at interval
   if (millis() >= nextTX) {
     nextTX += TX_INTERVAL;
     send_telemetry_keepalive();
+    //mylog("wifi_status: %d\n", wifi_status);
   }
 
   process_ir_signal();
@@ -240,6 +253,29 @@ void loop() {
       process_rx_packet();
     }
   }
+}
+
+/*
+ * process lost wifi
+ * send messages and execute short delay is we have no wifi connection
+ * this function must be called:
+ * - once ever loop cycle while wifi is down
+ * - once only after WiFi is re-established 
+ */
+void process_lost_wifi() { 
+  if (WiFi.status() != WL_CONNECTED) {
+    if (wifi_status) mylog("WiFi lost\n");   // one-shot user message
+    wifi_status = false;
+    //delay(250);             // do not remove, no delay will crash the ESP8266
+    digitalWrite(FAULT_LED_PIN, bitRead(flash_byte, FLASH_500));
+    digitalWrite(LED_BUILTIN, bitRead(flash_byte, FLASH_500));
+    
+  } else {
+    wifi_status = true;
+    mylog("WiFi re-established\n");
+    digitalWrite(FAULT_LED_PIN, LED_OFF);
+    digitalWrite(LED_BUILTIN, LED_OFF);
+  }  
 }
 
 /*
@@ -426,21 +462,22 @@ void send_telemetry_keepalive() {
  */
 bool send_telemetry_packet(int packet_length) {
   bool retVal = false;
+  if (!wifi_status) return retVal;
   if (!t_host_enable) return retVal;
   if (packet_length < 1) return retVal;
   if (!Udp.beginPacket(t_host_ip, t_port)) {
-    mylog("Telemetry: Udp.beginPacket failed");
+    mylog("Telemetry: Udp.beginPacket failed\n");
     goto send_done;
   }
 
   digitalWrite(OK_LED_PIN, LED_ON);
   if ( Udp.write(txPacket, packet_length) != packet_length)  {
-    mylog("Telemetry: Udp.write failed");
+    mylog("Telemetry: Udp.write failed\n");
     goto send_done;
   }
 
   if (!Udp.endPacket()) {
-    mylog("Telemetry: Udp.endPacket failed");
+    mylog("Telemetry: Udp.endPacket failed\n");
   } else {
     //mylog("%d: Telemetry Packet %d sent\n", millis(), udp_sequence-1);
     retVal = true;
@@ -686,7 +723,7 @@ startAgain:
  * If not connected within timeout period the user will be prompted to select a new WiFi network
  * Once the WiFi is conneced we wait for a broadcast packet from the telemetry host
  */
-void wait_for_wifi() {
+void establish_wifi() {
   long timeout;
 start_again:
   timeout = millis() + WIFI_CONNECT_TIMEOUT;
@@ -704,6 +741,7 @@ start_again:
       timeout = millis() + WIFI_CONNECT_TIMEOUT;
     }
   }
+  wifi_status = true;
   digitalWrite(FAULT_LED_PIN, LED_OFF);
   calculate_broadcast_ip();
   //mylog("WiFi Connected, [%02X:%02X:%02X:%02X:%02X:%02X]\n", macAddr[0], macAddr[1], macAddr[2], macAddr[3], macAddr[4], macAddr[5]);
