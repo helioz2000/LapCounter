@@ -67,7 +67,8 @@ char wifi_passphrase[32];;            // storage for WiFi passphrase
 char wifi_hostname[12];               // storage for WiFi hostname (LCxxxxxx)
 IPAddress wifi_broadcast_ip;          // broadcast Wifi IP address (calculated)
 const unsigned long WIFI_CONNECT_TIMEOUT=15000;    // max connection time for WiFi timeout
-bool wifi_status = false;             // WiFi connection status indicator
+bool wifi_connected = false;          // To detect lost WiFi connection
+byte wifi_last_status;                // To detect WiFi status change
 
 // server - default values are used when there is no telemetry server
 String http_server_domain = "galston500.com";
@@ -183,7 +184,7 @@ void setup() {
   WiFi.hostname(wifi_hostname);
 
   // We start by connecting to a WiFi network
-  mylog("\nEnter ""+++"" to activate WiFi config mode.\nEnter ""l"" to trigger lapcount\n\nConnecting to %s", WiFi.SSID().c_str());
+  mylog("\nEnter ""+++"" to activate WiFi config mode.\nEnter ""l"" to trigger lapcount\nEnter ""i"" to print WiFi info\n\nConnecting to %s", WiFi.SSID().c_str());
 
   led_test();
   digitalWrite(FAULT_LED_PIN, LED_ON);
@@ -204,6 +205,8 @@ void setup() {
   //if (WiFi.status() != WL_CONNECTED) {
     establish_wifi();
   //}
+  //mylog("WiFi Firnware V%\n", WiFi.firmwareVersion());
+  wifi_last_status = WiFi.status();
   mylog("\nSetup finished - starting loop\n");
 }
 
@@ -214,10 +217,20 @@ void setup() {
 
 void loop() {
   // dropped WiFi connection
-  if ((WiFi.status() != WL_CONNECTED) || !wifi_status) {
+  if ((WiFi.status() != WL_CONNECTED) || !wifi_connected) {
     process_lost_wifi();
   }
 
+  // detect WiFi status change
+  /*
+  if (WiFi.status() != wifi_last_status) {
+    mylog("WiFi status: ");
+    show_wifi_status();
+    mylog(", RSSI:%ddBm\n", WiFi.RSSI());
+    wifi_last_status = WiFi.status();
+  }
+  */
+  
   // check for user input
   if (scan_user_input()) {
     wifi_select_network();
@@ -228,7 +241,6 @@ void loop() {
   if (millis() >= nextTX) {
     nextTX += TX_INTERVAL;
     send_telemetry_keepalive();
-    //mylog("wifi_status: %d\n", wifi_status);
   }
 
   process_ir_signal();
@@ -264,14 +276,13 @@ void loop() {
  */
 void process_lost_wifi() { 
   if (WiFi.status() != WL_CONNECTED) {
-    if (wifi_status) mylog("WiFi lost\n");   // one-shot user message
-    wifi_status = false;
-    //delay(250);             // do not remove, no delay will crash the ESP8266
+    if (wifi_connected) mylog("WiFi lost\n");   // one-shot user message
+    wifi_connected = false;
     digitalWrite(FAULT_LED_PIN, bitRead(flash_byte, FLASH_500));
     digitalWrite(LED_BUILTIN, bitRead(flash_byte, FLASH_500));
     
   } else {
-    wifi_status = true;
+    wifi_connected = true;
     mylog("WiFi re-established\n");
     digitalWrite(FAULT_LED_PIN, LED_OFF);
     digitalWrite(LED_BUILTIN, LED_OFF);
@@ -363,6 +374,7 @@ bool send_lapcount_http(unsigned long event_time) {
   int response_status_code;
   int battery_voltage = read_battery_voltage();
   if (!http_server_enable) return false;
+  if (!wifi_connected) return false;
   unsigned long http_start_time = millis();
   mylog("Sending lapcount http request (battery %dmV) .... \n", battery_voltage);
   if (! server.connect(http_server_domain.c_str(), http_server_port)) {
@@ -462,7 +474,7 @@ void send_telemetry_keepalive() {
  */
 bool send_telemetry_packet(int packet_length) {
   bool retVal = false;
-  if (!wifi_status) return retVal;
+  if (!wifi_connected) return retVal;
   if (!t_host_enable) return retVal;
   if (packet_length < 1) return retVal;
   if (!Udp.beginPacket(t_host_ip, t_port)) {
@@ -741,7 +753,7 @@ start_again:
       timeout = millis() + WIFI_CONNECT_TIMEOUT;
     }
   }
-  wifi_status = true;
+  wifi_connected = true;
   digitalWrite(FAULT_LED_PIN, LED_OFF);
   calculate_broadcast_ip();
   //mylog("WiFi Connected, [%02X:%02X:%02X:%02X:%02X:%02X]\n", macAddr[0], macAddr[1], macAddr[2], macAddr[3], macAddr[4], macAddr[5]);
@@ -752,7 +764,6 @@ start_again:
 #endif
 
   show_wifi_info();
-  esp_info();
 
   mylog("Telemetry host discovery in progress ...\n");
 
@@ -812,7 +823,7 @@ int read_battery_voltage() {
  * returns true if the user has entered +++ otherwise false
  */
 bool scan_user_input() {
-  unsigned long event_time;
+
   int line_len, retval = false;
   if (UI.available()) {
 
@@ -828,11 +839,8 @@ bool scan_user_input() {
     }
     
     // look for 'l'
-    if ( (line_len == 1) && (inputBuffer[0] == 'l') ){
-      event_time = millis();
-      mylog("Simulated Lap event triggered\n");
-      send_lapcount_udp();
-      send_lapcount_http(event_time);
+    if ( line_len == 1 ){
+      process_user_command(inputBuffer[0]);
       goto done;
     }
   }
@@ -843,6 +851,28 @@ done:
     UI.read();
   }
   return retval;
+}
+
+void process_user_command(char c) {
+  unsigned long event_time;
+  switch(c) {
+    case 'e':
+      esp_info();
+      break;
+    case 'l':
+      event_time = millis();
+      mylog("Simulated Lap event triggered\n");
+      send_lapcount_udp();
+      send_lapcount_http(event_time);
+      break;
+    case 'i':
+      mylog("WiFi: ");
+      show_wifi_status();
+      mylog(", RSSI:%ddBm\n", WiFi.RSSI());
+      break;
+    default:
+      mylog("unknown command <%c>\n", c);
+  }
 }
 
 /*
@@ -915,9 +945,41 @@ void show_wifi_info() {
 
 }
 
+void show_wifi_status() {
+  switch(WiFi.status()) {
+    case WL_CONNECTED:
+      mylog("Connected");
+      break;
+    case WL_NO_SHIELD:
+      mylog("No Shield");
+      break;
+    case WL_IDLE_STATUS:
+      mylog("Idle");
+      break;
+    case WL_NO_SSID_AVAIL:
+      mylog("No SSID Available");
+      break;
+    case WL_SCAN_COMPLETED:
+      mylog("Scan Completed");
+      break;
+    case WL_CONNECT_FAILED:
+      mylog("Connect Failed");
+      break;
+    case WL_CONNECTION_LOST:
+      mylog("Connection Lost");
+      break;
+    case WL_DISCONNECTED:
+      mylog("Disconnected");
+      break;
+    default:
+      mylog("Unknown <%d>", WiFi.status());
+      break;
+  }
+}
+
 void esp_info() {
-#ifdef SHOWINFO_ESP
-  mylog("\nChip info:\n");
+//#ifdef SHOWINFO_ESP
+  mylog("\nESP Chip info:\n");
   mylog("Reset reason: %s\n", ESP.getResetReason().c_str() );
   mylog("Chip ID: %u\n", ESP.getChipId() );
   mylog("Core Version: %s\n", ESP.getCoreVersion().c_str() );
@@ -930,5 +992,5 @@ void esp_info() {
   mylog("Flash Chip size: %u (physical)\n", ESP.getFlashChipRealSize() );
   mylog("Flash Chip speed: %uHz\n", ESP.getFlashChipSpeed() );
   mylog("VCC: %.2fV\n", (float)ESP.getVcc() / 896 );
-#endif
+//#endif
 }
