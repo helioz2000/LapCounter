@@ -85,7 +85,9 @@ Smoothed <int> bat_I_filter[2];     // filter raw analog values
 const int VCC_MV = 5000;              // VCC
 const int ADC_RESOLUTION = 1024;      // resolution of inbuilt ADC
 const float MV_PER_BIT = (float)VCC_MV / (float)ADC_RESOLUTION;       // for analog conversion
+//ACS712 5A scaling is 185mV/A = 185mV/1000mA = 5.405 mA/mV
 const int MA_PER_MV = 5;                    // ACS712 -5A=1.5V, 0A=2.5V +5A = 3.5V, 5mA per mV
+const int UA_PER_MV = 5405;                 // uA per mV for more accurate calculation
 const int ACS712_ZERO_OFFSET[] = { -15, -20 };         // ACS712 zero point offset from VCC/2 [mV]
 
 // Analog readings
@@ -313,7 +315,9 @@ int getBatteryCurrent(byte batIndex) {
 #ifdef DEBUG_SHOW_AI_V
   return inputVoltage;
 #else
-  return (inputVoltage - (VCC_MV / 2) - ACS712_ZERO_OFFSET[batIndex]) * MA_PER_MV;
+  long uA = (long)(inputVoltage - (VCC_MV / 2) - ACS712_ZERO_OFFSET[batIndex]) * (long)UA_PER_MV;
+  return (int) (uA/1000);
+  //return (inputVoltage - (VCC_MV / 2) - ACS712_ZERO_OFFSET[batIndex]) * MA_PER_MV;
 #endif
 }
 
