@@ -5,7 +5,7 @@
  * Compile settings:
  * Board: ATtiny 24/44/84
  * Processor: ATtiny84
- * Clock: External 8MHz
+ * Clock: Internal 8MHz
  * Programmer: USBtinyISP
  * Port: leave clear
  * 
@@ -32,7 +32,7 @@
  * The batteries can be either 12V Lead Acid or 18V LiIon (tool) batteries.
  * The type of battery is automatically determined by the measured voltage.
  * 
- * Battery volateg ranges:
+ * Battery voltage ranges:
  * Lead Acid: 
  * voltage range: 12-14.7V. 
  * At rest: 100% > 12.6V, 50%=12.4V, Dead Flat=12.0V
@@ -85,7 +85,7 @@ Smoothed <int> bat_I_filter[2];     // filter raw analog values
 const int VCC_MV = 5000;              // VCC
 const int ADC_RESOLUTION = 1024;      // resolution of inbuilt ADC
 const float MV_PER_BIT = (float)VCC_MV / (float)ADC_RESOLUTION;       // for analog conversion
-const int MA_PER_MV = 2;                    // ACS712 5A = 2.5V, 2mA per mV
+const int MA_PER_MV = 5;                    // ACS712 -5A=1.5V, 0A=2.5V +5A = 3.5V, 5mA per mV
 const int ACS712_ZERO_OFFSET[] = { -15, -20 };         // ACS712 zero point offset from VCC/2 [mV]
 
 // Analog readings
@@ -399,6 +399,7 @@ void displayRawValues () {
   lcd.print(analogRead(BAT2_V_PIN));
   lcd.print("  ");
 
+/*
   lcd.setCursor(0,2);
   lcd.print("I1 Filtered =");
   lcd.print(bat1_I_raw.get());
@@ -408,6 +409,7 @@ void displayRawValues () {
   lcd.print("I2 Filtered =");
   lcd.print(bat2_I_raw.get());
   lcd.print("  ");
+  */
 }
 #endif
 
