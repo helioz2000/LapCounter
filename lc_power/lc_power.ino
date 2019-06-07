@@ -18,7 +18,7 @@
  * 5 - not connected (Serial RX for commissioning)
  * 6 - Analog Input - Current Batt1 (ACS712 5A)
  * 7 - I2C SDA
- * 8 - not connected
+ * 8 - Push Button (PB)
  * 9 - I2C SCL
  * 10- Analog Input - Current Batt2 (ACS712 5A)
  * 11 - Analog Input - Voltage Batt2 (MCP6002 B, range 10.3V-25V)
@@ -69,6 +69,7 @@ const byte BAT_SEL_PIN[] = {10, 9 };   // pin 2 and 3
 #define BAT2_I_PIN A3     // pin 10
 #define BAT2_V_PIN A2     // pin 11
 #define BAT1_V_PIN A1     // pin 12
+#define PB_PIN 5          // pin 8
 
 // for commissioning in case LCD is not working/present
 #ifdef DEBUG_SERIAL
@@ -85,13 +86,12 @@ Smoothed <int> bat_I_filter[2];     // filter raw analog values
 const int VCC_MV = 5000;              // VCC
 const int ADC_RESOLUTION = 1024;      // resolution of inbuilt ADC
 const float MV_PER_BIT = (float)VCC_MV / (float)ADC_RESOLUTION;       // for analog conversion
-//ACS712 5A scaling is 185mV/A = 185mV/1000mA = 5.405 mA/mV
-const int MA_PER_MV = 5;                    // ACS712 -5A=1.5V, 0A=2.5V +5A = 3.5V, 5mA per mV
-const int UA_PER_MV = 5405;                 // uA per mV for more accurate calculation
+const float MA_PER_MV = 5.405405;     // ACS712 5A scaling is 185mV/A = 185mV/1000mA = 5.405 mA/mV
 const int ACS712_ZERO_OFFSET[] = { -15, -20 };         // ACS712 zero point offset from VCC/2 [mV]
 
-// Analog readings
+// IO readings
 int bat_I_mA[2], bat_V_mV[2];
+bool pb_activated = false;
 
 // Processing time slots
 const int ANALOG_READ_INTERVAL = 100;       // ms between analog update
@@ -99,10 +99,11 @@ const int DISPLAY_UPDATE_INTERVAL = 250;    // ms between display update
 const int PROCESS_INTERVAL = 10;            // ms between logic processing
 unsigned long nextAnalogRead, nextDisplayUpdate, nextProcess;
 
-// Display valiables
+// Display variables
 unsigned long nextDisplayPageChange;
 byte displayPageNumber;
 const int DISPLAY_PAGE_CHANGE_TIME = 2000;  // ms between page changes
+bool display_light = true;
 
 // Battery variables
 #define B1 0    // index for Battery arrays
@@ -133,6 +134,7 @@ void setup() {
   pinMode(BAT_SEL_PIN[B2], OUTPUT);
   digitalWrite(BAT_SEL_PIN[B1], LOW);
   digitalWrite(BAT_SEL_PIN[B2], LOW);
+  pinMode(PB_PIN, INPUT_PULLUP);
 
   // Select reference for analog inputs
   analogReference(DEFAULT);   // use VCC as reference [INTERNAL = 1.1V, EXTERNAL]
@@ -309,20 +311,21 @@ int getBatteryVoltage(int inputVoltage) {
  * Convert analog input voltage to current reading 
  * ACS712 output is VCC/2 at zero
  * inputVoltage in mV
+ * returns current in mA
  */
 int getBatteryCurrent(byte batIndex) {
-  int inputVoltage = (int)analogVoltage(bat_I_filter[batIndex].get());
+  int inputVoltage = analogVoltage(bat_I_filter[batIndex].get());
 #ifdef DEBUG_SHOW_AI_V
-  return inputVoltage;
+  return (int)inputVoltage;
 #else
-  long uA = (long)(inputVoltage - (VCC_MV / 2) - ACS712_ZERO_OFFSET[batIndex]) * (long)UA_PER_MV;
-  return (int) (uA/1000);
-  //return (inputVoltage - (VCC_MV / 2) - ACS712_ZERO_OFFSET[batIndex]) * MA_PER_MV;
+  float current = (float)(inputVoltage - (VCC_MV / 2) - ACS712_ZERO_OFFSET[batIndex]) * MA_PER_MV;
+  if (current <= 0.0) current = 0.0;    // Current can't be < 0
+  return (int) (current);
 #endif
 }
 
-// read all analogs
-void readAnalogs(void) {
+// read all IO
+void readIO(void) {
   // run current inputs through filter
   bat_I_filter[B1].add(analogRead(BAT1_I_PIN));
   bat_I_filter[B2].add(analogRead(BAT2_I_PIN));
@@ -333,6 +336,7 @@ void readAnalogs(void) {
   bat_V_mV[B1] = getBatteryVoltage((int)readAnalogVoltage(BAT1_V_PIN));
   bat_V_mV[B2] = getBatteryVoltage((int)readAnalogVoltage(BAT2_V_PIN));
 
+  pb_activated = !digitalRead(PB_PIN);
 }
 
 void displayVoltage (int millivolts) {
@@ -447,27 +451,61 @@ void display_pg3() {
 #endif
 }
 
+void display_pg5() {
+  lcd.print("V1=");
+  lcd.print(analogRead(BAT1_V_PIN));
+  lcd.print(" I1=");
+  lcd.print(analogRead(BAT1_I_PIN));  
+  
+  lcd.setCursor(0,1);
+  lcd.print("V2=");
+  lcd.print(analogRead(BAT2_V_PIN));
+  lcd.print(" I2=");
+  lcd.print(analogRead(BAT2_I_PIN));
+}
+
 // display tasks
 void display() { 
   lcd.setCursor(0,0);
   if (millis() >= nextDisplayPageChange) {
-    nextDisplayPageChange = millis()+DISPLAY_PAGE_CHANGE_TIME;
-    displayPageNumber++;
-    lcd.clear();
+      nextDisplayPageChange = millis()+DISPLAY_PAGE_CHANGE_TIME;
+      displayPageNumber++;
+      lcd.clear();
+      if (pb_activated) {
+        displayPageNumber = 5;
+      }
   }
+
   switch(displayPageNumber) {
     case 2:
       display_pg2();
       break;
+      /*
     case 3:
       if (bat_alarm) lcd.noBacklight();
       display_pg3();
-      break;     
+      break;
+      */
+    case 5:
+      display_pg5();
+      break;  
     default:        // default applies to "case 1:" and will reset displayPageNumber when > 3 
       lcd.backlight();
       displayPageNumber=1;
       display_pg1();
       break; 
+  }
+  
+  if (bat_alarm) {
+    display_light = !display_light;
+  } else {
+    display_light = true;
+  }
+  
+  if (display_light) {
+    lcd.backlight();
+  } else {
+    lcd.noBacklight();
   } 
 }
 
@@ -486,13 +524,14 @@ void loop() {
   // Update analog values
   if (millis() >= nextAnalogRead) {
     nextAnalogRead = millis() + ANALOG_READ_INTERVAL;
-    readAnalogs();
+    readIO();
   }
 
   // Update display
   if (millis() >= nextDisplayUpdate) {
     nextDisplayUpdate = millis() + DISPLAY_UPDATE_INTERVAL;
     display();
+    
   }
 
   if (millis() >= nextProcess) {
