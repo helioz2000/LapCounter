@@ -126,6 +126,11 @@ unsigned long lap_count_signal_block_timeout;
 //long lap_count_signal_time;               // time when lapcount event occured
 unsigned long lap_count_led_time = 1000;  // min time for LED indication on lap count
 
+// Lap Count event queue
+const int LC_QUEUE_SIZE = 30;
+unsigned long lap_count_event_times[LC_QUEUE_SIZE];
+unsigned int lap_count_queue_size = 0;
+
 uint8_t macAddr[6];                       // MAC address of this device
 
 char inputBuffer[32];                     // used for serial port input from user
@@ -217,19 +222,20 @@ void setup() {
 
 void loop() {
   // dropped WiFi connection
-  if ((WiFi.status() != WL_CONNECTED) || !wifi_connected) {
-    process_lost_wifi();
-  }
+  //if ((WiFi.status() != WL_CONNECTED) || !wifi_connected) {
+  //  process_lost_wifi();
+  //}
 
   // detect WiFi status change
-  /*
   if (WiFi.status() != wifi_last_status) {
-    mylog("WiFi status: ");
-    show_wifi_status();
-    mylog(", RSSI:%ddBm\n", WiFi.RSSI());
+    //mylog("WiFi status: ");
+    //show_wifi_status();
+    //mylog(", RSSI:%ddBm\n", WiFi.RSSI());
     wifi_last_status = WiFi.status();
+    if (WiFi.status() == WL_CONNECTED) {
+      dequeue_lapcounts()
+    }
   }
-  */
   
   // check for user input
   if (scan_user_input()) {
@@ -291,7 +297,7 @@ void process_lost_wifi() {
 
 /*
  * process lap count event
- * lap countign is blocked for a period of time to avoid multiple counts
+ * lap counting is blocked for a period of time to avoid multiple counts
  * when we receive multiple close spaced pulses.
  */
 void process_lap_count() {
@@ -300,8 +306,12 @@ void process_lap_count() {
     lap_count_signal_shadow = true;
     lap_count_signal_block_timeout = millis() + lap_count_signal_block_time;
     digitalWrite(OK_LED_PIN, LED_ON);
-    send_lapcount_udp();
-    send_lapcount_http(lap_count_event_time);
+    if ((WiFi.status() == WL_CONNECTED)) {
+      send_lapcount_udp();
+      send_lapcount_http(lap_count_event_time);
+    } else {
+      queue_lapcount(lap_count_event_time);
+    }
     ok_led_off_time = millis() + lap_count_led_time;
   } else {
     if(millis() >= lap_count_signal_block_timeout) {
@@ -309,6 +319,24 @@ void process_lap_count() {
       lap_count_signal_shadow = false;
     }
   }
+}
+
+/*
+ * queue lap count event
+ * lap count is added to queue for later processing
+ */
+void queue_lapcount(unsigned long event_time) {
+  if (lap_count_queue_size < LC_QUEUE_SIZE) {
+    lap_count_event_times[lap_count_queue_size];
+  }
+  LC_QUEUE_SIZE = 30;
+unsigned long lap_count_event_times[LC_QUEUE_SIZE];
+unsigned int lap_count_queue_size = 0;
+
+}
+
+void dequeue_lapcounts() {
+  
 }
 
 /*
