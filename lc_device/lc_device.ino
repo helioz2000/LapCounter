@@ -129,7 +129,7 @@ unsigned long lap_count_led_time = 1000;  // min time for LED indication on lap 
 // Lap Count event queue
 const int LC_QUEUE_SIZE = 30;
 unsigned long lap_count_event_times[LC_QUEUE_SIZE];
-unsigned int lap_count_queue_size = 0;
+unsigned int lap_count_queue_ptr = 0;
 
 uint8_t macAddr[6];                       // MAC address of this device
 
@@ -233,7 +233,7 @@ void loop() {
     //mylog(", RSSI:%ddBm\n", WiFi.RSSI());
     wifi_last_status = WiFi.status();
     if (WiFi.status() == WL_CONNECTED) {
-      dequeue_lapcounts()
+      dequeue_all_lapcounts();
     }
   }
   
@@ -323,20 +323,55 @@ void process_lap_count() {
 
 /*
  * queue lap count event
- * lap count is added to queue for later processing
+ * lap count is added to event queue for later processing
  */
 void queue_lapcount(unsigned long event_time) {
-  if (lap_count_queue_size < LC_QUEUE_SIZE) {
-    lap_count_event_times[lap_count_queue_size];
+  if (lap_count_queue_ptr < LC_QUEUE_SIZE) {
+    lap_count_event_times[lap_count_queue_ptr++];
+  } else {
+    mylog("Error: Lap Count Queue overrun\n");
   }
-  LC_QUEUE_SIZE = 30;
-unsigned long lap_count_event_times[LC_QUEUE_SIZE];
-unsigned int lap_count_queue_size = 0;
-
 }
 
-void dequeue_lapcounts() {
-  
+/*
+ * dequeue all lap count event
+ * all lap count events are dequeued from oldest to newest
+ * if a send failure occurs the sent events are deleted 
+ * from the queue and pointer is adjusted to the next  
+ * available index
+ */
+bool dequeue_all_lapcounts() {
+  int i,x;
+  // shift queue one down
+  for (i=0; i++; i<lap_count_queue_ptr) {   
+    if (!send_lapcount_http(lap_count_event_times[i])) goto send_failure;   // send event
+  }
+  lap_count_queue_ptr = 0;                          // reset pointer
+  return true;
+send_failure:
+  // shift queue down eliminating already sent events
+  for (x=i; x++; x<lap_count_queue_ptr) {
+    lap_count_event_times[x-i] = lap_count_event_times[x];
+  }
+  // adjust pointer to next unused index
+  lap_count_queue_ptr-=i;
+  return false;
+}
+
+/*
+ * dequeue one lap count event
+ * the oldest lap count event is dequeued and the remaining events shifted down
+ */
+bool dequeue_one_lapcount() {
+  int i;
+  //send oldest entry
+  if (!send_lapcount_http(lap_count_event_times[0])) return false;
+  // shift queue one down
+  for (i=0; i++; i<lap_count_queue_ptr) {
+    lap_count_event_times[i] = lap_count_event_times[i+1];
+  }
+  lap_count_queue_ptr--;
+  return true;
 }
 
 /*
