@@ -90,11 +90,11 @@ const bool LED_ON = false;
 const bool LED_OFF = true;
 
 const long TX_INTERVAL = 5000;        // telemetry TX
-long nextTX;
+unsigned long nextTX;
 
 unsigned long ok_led_off_time = 0;              // OK LED indication
 
-IPAddress t_host_ip = (127,0,0,1);              // IP of telemetry host, set by host discovery
+IPAddress t_host_ip = {127,0,0,1};              // IP of telemetry host, set by host discovery
 const char t_host_id[] = {'L', 'C', '1'};       // ID for telemetry host (used host discovery)
 const int T_HOST_ID_LEN = 3;                    // length of host id
 bool t_host_enable = false;                     // Telemetry is enabled (host has been found)
@@ -327,7 +327,7 @@ void process_lap_count() {
  */
 void queue_lapcount(unsigned long event_time) {
   if (lap_count_queue_ptr < LC_QUEUE_SIZE) {
-    lap_count_event_times[lap_count_queue_ptr++];
+    lap_count_event_times[lap_count_queue_ptr++] = event_time;
   } else {
     mylog("Error: Lap Count Queue overrun\n");
   }
@@ -341,16 +341,16 @@ void queue_lapcount(unsigned long event_time) {
  * available index
  */
 bool dequeue_all_lapcounts() {
-  int i,x;
+  unsigned int i,x;
   // shift queue one down
-  for (i=0; i++; i<lap_count_queue_ptr) {   
+  for (i=0; i<lap_count_queue_ptr; i++ ) {   
     if (!send_lapcount_http(lap_count_event_times[i])) goto send_failure;   // send event
   }
   lap_count_queue_ptr = 0;                          // reset pointer
   return true;
 send_failure:
   // shift queue down eliminating already sent events
-  for (x=i; x++; x<lap_count_queue_ptr) {
+  for (x=i; x<lap_count_queue_ptr; x++) {
     lap_count_event_times[x-i] = lap_count_event_times[x];
   }
   // adjust pointer to next unused index
@@ -363,11 +363,11 @@ send_failure:
  * the oldest lap count event is dequeued and the remaining events shifted down
  */
 bool dequeue_one_lapcount() {
-  int i;
+  unsigned int i;
   //send oldest entry
   if (!send_lapcount_http(lap_count_event_times[0])) return false;
   // shift queue one down
-  for (i=0; i++; i<lap_count_queue_ptr) {
+  for (i=0; i<lap_count_queue_ptr; i++ ) {
     lap_count_event_times[i] = lap_count_event_times[i+1];
   }
   lap_count_queue_ptr--;
@@ -502,14 +502,15 @@ bool send_lapcount_http(unsigned long event_time) {
 
 bool send_lapcount_udp() {
   char strbuf[16];
-  LONGUNION_t elapsed_time;
+  unsigned long elapsed_time;
 
   if (!t_host_enable) return false;
 
-  int packet_length = make_telemetry_header(PACKET_TYPE_LAP_COUNT);
-  elapsed_time.l_value = millis() - lap_count_event_time;
+  //int packet_length = 
+  make_telemetry_header(PACKET_TYPE_LAP_COUNT);
+  elapsed_time = millis() - lap_count_event_time;
   //lap_count_event_time -= 255;
-  sprintf(strbuf, "\t%d\n", elapsed_time);
+  sprintf(strbuf, "\t%lu\n", elapsed_time);
   strcat(txPacket, strbuf);
   mylog("lapcount UDP: %s", txPacket);
   return send_telemetry_packet(strlen(txPacket));
@@ -524,7 +525,8 @@ bool send_lapcount_udp() {
  * send keepalive packet
  */
 void send_telemetry_keepalive() {
-  int packet_length = make_telemetry_header(PACKET_TYPE_TELEMETRY);
+  //int packet_length = 
+  make_telemetry_header(PACKET_TYPE_TELEMETRY);
   digitalWrite(OK_LED_PIN, LED_ON);
   strcat(txPacket, "\n");
   send_telemetry_packet(strlen(txPacket));
@@ -535,7 +537,7 @@ void send_telemetry_keepalive() {
 /*
  * send telemetry data to host
  */
-bool send_telemetry_packet(int packet_length) {
+bool send_telemetry_packet(unsigned int packet_length) {
   bool retVal = false;
   if (!wifi_connected) return retVal;
   if (!t_host_enable) return retVal;
@@ -590,7 +592,7 @@ bool setup_t_port_listening () {
 }
 
 bool send_host_discovery_request() {
-  int packet_length;
+  unsigned int packet_length;
 
   // send config request
   if (!Udp.beginPacket(wifi_broadcast_ip, bc_port)) {
@@ -614,7 +616,7 @@ send_done:
   }
 
   digitalWrite(FAULT_LED_PIN, LED_OFF);
-
+  return true;
 }
 
 /*
@@ -625,7 +627,7 @@ send_done:
 bool discover_telemetry_host(long timeout) {
   bool retval = false;
   int retry_count = 0;
-  long timeout_value;
+  unsigned long timeout_value;
   int packetSize;
   int bytesRead;
 
@@ -799,7 +801,7 @@ startAgain:
  * Once the WiFi is conneced we wait for a broadcast packet from the telemetry host
  */
 void establish_wifi() {
-  long timeout;
+  unsigned long timeout;
 start_again:
   timeout = millis() + WIFI_CONNECT_TIMEOUT;
   while (WiFi.status() != WL_CONNECTED) {
@@ -981,7 +983,7 @@ void mylog(const char *sFmt, ...)
  */
 void calculate_broadcast_ip() {
   byte mask;
-  byte b_cast[4];
+  //byte b_cast[4];
   IPAddress ip = WiFi.localIP();
   IPAddress subnet = WiFi.subnetMask();
   for (int i = 0; i < 4; i++) {
