@@ -89,7 +89,7 @@ typedef union {
 const bool LED_ON = false;
 const bool LED_OFF = true;
 
-const long TX_INTERVAL = 5000;        // telemetry TX
+const long TX_INTERVAL = 2000;        // telemetry TX
 unsigned long nextTX;
 
 unsigned long ok_led_off_time = 0;              // OK LED indication
