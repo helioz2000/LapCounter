@@ -40,6 +40,9 @@
  *  D8 = 15
  */
 
+ // Version 
+const byte VERSION  0x10;     // V1.0
+
 const byte LAP_COUNT_SENSOR_PIN = 0;
 #define RED_LED_PIN 13 
 #define GREEN_LED_PIN 12
@@ -204,13 +207,14 @@ void setup() {
 
   // configure lap counter input interrupt
   // disabled as it picks up sporadic pulses collected by the IR sensor board.
+  // now using digital read and debouncing the signal
   //attachInterrupt(digitalPinToInterrupt(LAP_COUNT_SENSOR_PIN), onLapCountISR, FALLING);
   
   // establish WiFi 
   //if (WiFi.status() != WL_CONNECTED) {
     establish_wifi();
   //}
-  //mylog("WiFi Firnware V%\n", WiFi.firmwareVersion());
+  //mylog("WiFi Firmware V%\n", WiFi.firmwareVersion());
   wifi_last_status = WiFi.status();
   mylog("\nSetup finished - starting loop\n");
 }
@@ -222,9 +226,9 @@ void setup() {
 
 void loop() {
   // dropped WiFi connection
-  //if ((WiFi.status() != WL_CONNECTED) || !wifi_connected) {
-  //  process_lost_wifi();
-  //}
+  if ((WiFi.status() != WL_CONNECTED) || !wifi_connected) {
+    process_lost_wifi();
+  }
 
   // detect WiFi status change
   if (WiFi.status() != wifi_last_status) {
@@ -232,6 +236,7 @@ void loop() {
     //show_wifi_status();
     //mylog(", RSSI:%ddBm\n", WiFi.RSSI());
     wifi_last_status = WiFi.status();
+    // If WiFi has been established send all buffered lapcounts
     if (WiFi.status() == WL_CONNECTED) {
       dequeue_all_lapcounts();
     }
@@ -275,9 +280,9 @@ void loop() {
 
 /*
  * process lost wifi
- * send messages and execute short delay is we have no wifi connection
+ * send messages and execute short delay if we have no wifi connection
  * this function must be called:
- * - once ever loop cycle while wifi is down
+ * - once every loop cycle while wifi is down
  * - once only after WiFi is re-established 
  */
 void process_lost_wifi() { 
@@ -285,8 +290,7 @@ void process_lost_wifi() {
     if (wifi_connected) mylog("WiFi lost\n");   // one-shot user message
     wifi_connected = false;
     digitalWrite(FAULT_LED_PIN, bitRead(flash_byte, FLASH_500));
-    digitalWrite(LED_BUILTIN, bitRead(flash_byte, FLASH_500));
-    
+    digitalWrite(LED_BUILTIN, bitRead(flash_byte, FLASH_500));    
   } else {
     wifi_connected = true;
     mylog("WiFi re-established\n");
@@ -528,7 +532,9 @@ void send_telemetry_keepalive() {
   //int packet_length = 
   make_telemetry_header(PACKET_TYPE_TELEMETRY);
   digitalWrite(OK_LED_PIN, LED_ON);
-  strcat(txPacket, "\n");
+  // Add firmware version
+  sprintf(strbuf, "\t%d\n", VERSION);
+  strcat(txPacket, strbuf);
   send_telemetry_packet(strlen(txPacket));
   //mylog("Telemetry sent -->>%s", txPacket);
   ok_led_off_time = millis() + t_packet_led_time;
@@ -633,47 +639,48 @@ bool discover_telemetry_host(long timeout) {
 
   while(retry_count < T_HOST_DISCOVERY_RETRY) {
 
-  // exit if WiFi is not connected
+    // exit if WiFi is not connected
     if (WiFi.status() != WL_CONNECTED) {
-    goto end_loop;
-  }
+      goto end_loop;
+    }
 
     send_host_discovery_request();
 
-  // Start listening on broadcast port
+    // Start listening on broadcast port
     if (Udp.begin(bc_port) != 1) {
-    goto end_loop;
-  }
+      goto end_loop;
+    }
 
     timeout_value = millis() + timeout;
     bytesRead = 0;
 
     // wait for broadcast packet from telemetry host
     while (millis() < timeout_value) {
-    packetSize = Udp.parsePacket();
-    if(packetSize) {
-       // read the packet into packetBufffer
-      bytesRead = Udp.read(rxPacket,UDP_RX_BUFFER_SIZE);
-      if (validateTelemetryHost(bytesRead)) {
-        Udp.flush();
-        Udp.stop();
-        setup_t_port_listening();
-        retval = true;
-        goto end_loop;
+      packetSize = Udp.parsePacket();
+      if(packetSize) {
+        // read the packet into packetBufffer
+        bytesRead = Udp.read(rxPacket,UDP_RX_BUFFER_SIZE);
+        if (validateTelemetryHost(bytesRead)) {
+          Udp.flush();
+          Udp.stop();
+          setup_t_port_listening();
+          retval = true;
+          send_telemetry_keepalive();   // send "logon" packet 
+          goto end_loop;
+        }
       }
+      digitalWrite(FAULT_LED_PIN, bitRead(flash_byte, FLASH_250));
+      // Check for user input which indicates the user wants to change WiFi network
+      if (UI.available()) goto end_loop;
     }
-    digitalWrite(FAULT_LED_PIN, bitRead(flash_byte, FLASH_250));
-    // Check for user input which indicates the user wants to change WiFi network
-    if (UI.available()) goto end_loop;
-  }
     Udp.stop();
     // keep retrying until we find a telemetry host
     retry_count++;
     mylog("Telemetry host discover timeout, retry %d\n", retry_count);
-  }
+  }  // while
 
 end_loop:
-  digitalWrite(FAULT_LED_PIN, LED_OFF);
+  digitalWrite(FAULT_LED_PIN, LED_OFF); // Fault LED off
   return retval;
 }
 
@@ -797,8 +804,8 @@ startAgain:
 
 /*
  * Wait for WiFi to connect
- * If not connected within timeout period the user will be prompted to select a new WiFi network
- * Once the WiFi is conneced we wait for a broadcast packet from the telemetry host
+ * Once the WiFi is connected we wait for a broadcast packet from the telemetry host
+ * NOTE: It is important to stay in this loop as the device could be started outside WiFi range
  */
 void establish_wifi() {
   unsigned long timeout;
@@ -807,17 +814,21 @@ start_again:
   while (WiFi.status() != WL_CONNECTED) {
     delay(250);             // do not remove, no delay will crash the ESP8266
     digitalWrite(FAULT_LED_PIN, bitRead(flash_byte, FLASH_1S));
+    /* Disabled as we need to wait indefinitely for WiFi connection to appear
     if (millis() >= timeout) {
       digitalWrite(FAULT_LED_PIN, LED_ON);
       mylog("\nWiFi timeout trying to connect to %s\n", WiFi.SSID().c_str());
       wifi_select_network();
       timeout = millis() + WIFI_CONNECT_TIMEOUT;
     }
+    */
+    // The user can end the wait if a different WiFi network needs to be selected
     if (scan_user_input()) {
       wifi_select_network();
       timeout = millis() + WIFI_CONNECT_TIMEOUT;
     }
   }
+  // We have established a WiFi connection
   wifi_connected = true;
   digitalWrite(FAULT_LED_PIN, LED_OFF);
   calculate_broadcast_ip();
@@ -830,6 +841,7 @@ start_again:
 
   show_wifi_info();
 
+  // Check telemetry host availability
   mylog("Telemetry host discovery in progress ...\n");
 
   if (discover_telemetry_host(T_HOST_DISCOVERY_TIMEOUT)) {
