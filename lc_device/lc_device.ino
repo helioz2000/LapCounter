@@ -41,7 +41,7 @@
  */
 
  // Version 
-const byte VERSION  0x10;     // V1.0
+const byte VERSION = 0x10;     // V1.0
 
 const byte LAP_COUNT_SENSOR_PIN = 0;
 #define RED_LED_PIN 13 
@@ -529,6 +529,7 @@ bool send_lapcount_udp() {
  * send keepalive packet
  */
 void send_telemetry_keepalive() {
+  char strbuf[16];
   //int packet_length = 
   make_telemetry_header(PACKET_TYPE_TELEMETRY);
   digitalWrite(OK_LED_PIN, LED_ON);
