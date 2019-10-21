@@ -458,6 +458,7 @@ bool send_lapcount_http(unsigned long event_time) {
   // 2: event age
   httpStr += "&eventAge=";
   httpStr += String((millis() - event_time));
+  // 3: battery voltage
   httpStr += "&batVoltage=";
   httpStr += String(battery_voltage);
   // send string to server encapsulated in HTTP GET request
@@ -514,7 +515,8 @@ bool send_lapcount_udp() {
   make_telemetry_header(PACKET_TYPE_LAP_COUNT);
   elapsed_time = millis() - lap_count_event_time;
   //lap_count_event_time -= 255;
-  sprintf(strbuf, "\t%lu\n", elapsed_time);
+  int battery_voltage = read_battery_voltage();  
+  sprintf(strbuf, "\t%lu\t%d\n", elapsed_time, battery_voltage);
   strcat(txPacket, strbuf);
   mylog("lapcount UDP: %s", txPacket);
   return send_telemetry_packet(strlen(txPacket));
@@ -526,7 +528,7 @@ bool send_lapcount_udp() {
 // ********************************************************************************
 
 /*
- * send keepalive packet
+ * send keepalive/logon packet
  */
 void send_telemetry_keepalive() {
   char strbuf[16];
@@ -805,7 +807,7 @@ startAgain:
 
 /*
  * Wait for WiFi to connect
- * Once the WiFi is connected we wait for a broadcast packet from the telemetry host
+ * Once the WiFi is connected wait for a broadcast packet from the telemetry host
  * NOTE: It is important to stay in this loop as the device could be started outside WiFi range
  */
 void establish_wifi() {
