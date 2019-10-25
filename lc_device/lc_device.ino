@@ -533,7 +533,7 @@ bool send_lapcount_udp() {
 void send_telemetry_keepalive() {
   char strbuf[16];
   //int packet_length = 
-  make_telemetry_header(PACKET_TYPE_TELEMETRY);
+  make_telemetry_header(PACKET_TYPE_KEEP_ALIVE);
   digitalWrite(OK_LED_PIN, LED_ON);
   // Add firmware version
   sprintf(strbuf, "\t%d\n", VERSION);
