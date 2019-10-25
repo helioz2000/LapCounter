@@ -311,7 +311,7 @@ void process_lap_count() {
     lap_count_signal_block_timeout = millis() + lap_count_signal_block_time;
     digitalWrite(OK_LED_PIN, LED_ON);
     if ((WiFi.status() == WL_CONNECTED)) {
-      send_lapcount_udp();
+      send_lapcount_udp(lap_count_event_time);
       send_lapcount_http(lap_count_event_time);
     } else {
       queue_lapcount(lap_count_event_time);
@@ -413,7 +413,6 @@ void process_ir_signal() {
     ir_pulse_active = true;
     ir_pulse_length = 0;
   }
-
 }
 
 /*
@@ -505,15 +504,15 @@ bool send_lapcount_http(unsigned long event_time) {
   return true;
 }
 
-bool send_lapcount_udp() {
+bool send_lapcount_udp(unsigned long event_time) {
   char strbuf[16];
   unsigned long elapsed_time;
 
-  if (!t_host_enable) return false;
+  if (!t_host_enable) return false; // return if we have no telemetry host
 
   //int packet_length = 
   make_telemetry_header(PACKET_TYPE_LAP_COUNT);
-  elapsed_time = millis() - lap_count_event_time;
+  elapsed_time = millis() - event_time;
   //lap_count_event_time -= 255;
   int battery_voltage = read_battery_voltage();  
   sprintf(strbuf, "\t%lu\t%d\n", elapsed_time, battery_voltage);
@@ -529,14 +528,19 @@ bool send_lapcount_udp() {
 
 /*
  * send keepalive/logon packet
+ * logon true for first packet after telemtry host discovery
  */
-void send_telemetry_keepalive() {
+void send_telemetry_keepalive(bool logon) {
   char strbuf[16];
   //int packet_length = 
   make_telemetry_header(PACKET_TYPE_KEEP_ALIVE);
   digitalWrite(OK_LED_PIN, LED_ON);
   // Add firmware version
-  sprintf(strbuf, "\t%d\n", VERSION);
+  if (logon) {
+    sprintf(strbuf, "\t%d\tL\n", VERSION); }
+  else {
+    sprintf(strbuf, "\t%d\n", VERSION); }
+  
   strcat(txPacket, strbuf);
   send_telemetry_packet(strlen(txPacket));
   //mylog("Telemetry sent -->>%s", txPacket);
@@ -552,7 +556,12 @@ void send_telemetry_data() {
   make_telemetry_header(PACKET_TYPE_TELEMETRY);
   digitalWrite(OK_LED_PIN, LED_ON);
   // Number of data items
-  sprintf(strbuf, "\t%d\n", 0);
+  sprintf(strbuf, "\t%d", 1);
+  // Battery Voltage
+  int battery_voltage = read_battery_voltage();
+  sprintf(strbuf, "\t%d\t%d", 1, battery_voltage);
+  // End of data
+  sprintf("\n");
   strcat(txPacket, strbuf);
   send_telemetry_packet(strlen(txPacket));
   //mylog("Telemetry sent -->>%s", txPacket);
@@ -684,7 +693,7 @@ bool discover_telemetry_host(long timeout) {
           Udp.stop();
           setup_t_port_listening();
           retval = true;
-          send_telemetry_keepalive();   // send "logon" packet 
+          send_telemetry_keepalive(true);   // send "logon" packet 
           goto end_loop;
         }
       }
@@ -827,9 +836,9 @@ startAgain:
  * NOTE: It is important to stay in this loop as the device could be started outside WiFi range
  */
 void establish_wifi() {
-  unsigned long timeout;
+  //unsigned long timeout;
 start_again:
-  timeout = millis() + WIFI_CONNECT_TIMEOUT;
+  //timeout = millis() + WIFI_CONNECT_TIMEOUT;
   while (WiFi.status() != WL_CONNECTED) {
     delay(250);             // do not remove, no delay will crash the ESP8266
     digitalWrite(FAULT_LED_PIN, bitRead(flash_byte, FLASH_1S));
@@ -844,7 +853,7 @@ start_again:
     // The user can end the wait if a different WiFi network needs to be selected
     if (scan_user_input()) {
       wifi_select_network();
-      timeout = millis() + WIFI_CONNECT_TIMEOUT;
+      //timeout = millis() + WIFI_CONNECT_TIMEOUT;
     }
   }
   // We have established a WiFi connection
@@ -958,7 +967,7 @@ void process_user_command(char c) {
     case 'l':
       event_time = millis();
       mylog("Simulated Lap event triggered\n");
-      send_lapcount_udp();
+      send_lapcount_udp(event_time);
       send_lapcount_http(event_time);
       break;
     case 'i':

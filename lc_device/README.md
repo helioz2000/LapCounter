@@ -55,6 +55,7 @@ First packet to transmit after startup and successful discovery of telemetry hos
 | Field | Description
 |-------|:------------
 |4| Firmware version 0xAB, A=Major, B=Minor
+|5| Logon indicator "L", only transmitted once after lchost discovery
 
 **Packet Type 1:** Lap Count event.
 
@@ -83,3 +84,13 @@ Each Lap Count packet is acknowledged by the host with a UDP packet to the clien
 |8      | Data type
 |9      | Data
 |x      | pattern continues for all data items
+
+Date type description:
+
+| Type | Description
+|-------|:------------
+|1|Transponder Supply Voltage [mV]
+|2|Solar Panel Voltage [mV]
+|3|ESC Voltage [mV]
+|4|Solar Current [mA]
+|5|ESC Current [mA]
