@@ -251,7 +251,7 @@ void loop() {
  // send telemetry at interval
   if (millis() >= nextTX) {
     nextTX += TX_INTERVAL;
-    send_telemetry_keepalive();
+    send_telemetry_data();
   }
 
   process_ir_signal();
@@ -544,7 +544,23 @@ void send_telemetry_keepalive() {
 }
 
 /*
- * send telemetry data to host
+ * send telemetry data packet
+ */
+void send_telemetry_data() {
+  char strbuf[16];
+  //int packet_length = 
+  make_telemetry_header(PACKET_TYPE_TELEMETRY);
+  digitalWrite(OK_LED_PIN, LED_ON);
+  // Number of data items
+  sprintf(strbuf, "\t%d\n", 0);
+  strcat(txPacket, strbuf);
+  send_telemetry_packet(strlen(txPacket));
+  //mylog("Telemetry sent -->>%s", txPacket);
+  ok_led_off_time = millis() + t_packet_led_time;
+}
+
+/*
+ * dispatch telemetry data to host
  */
 bool send_telemetry_packet(unsigned int packet_length) {
   bool retVal = false;
