@@ -175,6 +175,7 @@ void ICACHE_RAM_ATTR onLapCountISR() {
 
 void setup() {
   UI.begin(9600);
+  UI.printf("\n\nlc_device Version 0x%0x\n", VERSION);
   delay(10);
 
   // Configure I/O
@@ -561,7 +562,7 @@ void send_telemetry_data() {
   int battery_voltage = read_battery_voltage();
   sprintf(strbuf, "\t%d\t%d", 1, battery_voltage);
   // End of data
-  sprintf("\n");
+  sprintf(strbuf, "\n");
   strcat(txPacket, strbuf);
   send_telemetry_packet(strlen(txPacket));
   //mylog("Telemetry sent -->>%s", txPacket);
