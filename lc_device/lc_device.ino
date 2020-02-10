@@ -915,7 +915,7 @@ void led_test() {
  * returns battery voltage in mV
  * Wemos D1 has 220k/100k voltage divider on A0
  * An external 33k resistor added externally on the high side bring the Voltage divider to
- * 253k/100k = 3.53V to 1V = 1024 bits on analog in
+ * 253k/100k = 3.53V to 1V = 1023, 10 bits on analog in
  * 
  */
 int read_battery_voltage() {
